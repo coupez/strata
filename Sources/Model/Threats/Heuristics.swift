@@ -12,7 +12,9 @@ enum Heuristics {
 
     static func reasons(for item: LaunchItem, signature: (String) -> Signature) -> [String] {
         guard let raw = item.program, !item.isOrphaned else { return [] }
-        let program = standardized(raw)
+        // A program with no usable location can't run; it is still classified by name, never by place.
+        let location = resolved(raw)
+        let program = location ?? standardized(raw)
         if isGenuineInterpreter(program, signature: signature) {
             guard let script = riskyScript(in: item) else { return [] }
             let name = (program as NSString).lastPathComponent.lowercased()
@@ -24,7 +26,7 @@ enum Heuristics {
         if programSignature.isTrusted { return [] }
 
         var reasons: [String] = []
-        if isRiskyLocation(program) { reasons.append("Runs from \(locationName(program))") }
+        if let location, isRisky(location) { reasons.append("Runs from \(locationName(location))") }
         switch programSignature.kind {
         case .unsigned: reasons.append("Program isn't signed")
         case .adhoc: reasons.append("Program has no developer signature")
@@ -35,29 +37,47 @@ enum Heuristics {
         return reasons
     }
 
-    /// The plist plus any program or script that isn't part of macOS or of an app bundle. An untrusted
-    /// app bundle sitting in a risky folder is removed whole rather than just its executable.
+    /// The plist plus any program or script that isn't part of macOS or of an app bundle, at its real
+    /// location. An untrusted app bundle sitting in a risky folder is removed whole rather than just its executable.
     static func removablePaths(of item: LaunchItem, signature: (String) -> Signature) -> [String] {
         var paths = [item.plist.path]
         guard let raw = item.program else { return paths }
-        let program = standardized(raw)
+        let location = resolved(raw)
+        let program = location ?? standardized(raw)
         if isGenuineInterpreter(program, signature: signature) {
             if let script = riskyScript(in: item) { paths.append(script) }
         } else if hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) {
             // Belongs to macOS or a package manager.
-        } else if let bundle = appBundle(containing: program) {
-            if !hasParentComponent(raw), isRiskyLocation(bundle), !signature(program).isTrusted { paths.append(bundle) }
-        } else if !hasParentComponent(raw) {
-            paths.append(program)
+        } else if let location {
+            if let bundle = appBundle(containing: location) {
+                if isRisky(bundle), !signature(location).isTrusted { paths.append(bundle) }
+            } else {
+                paths.append(location)
+            }
         }
         return paths
     }
 
-    /// A path with a `..` in it is unusable: `/tmp/../Users/me/Documents` must never look like a temp file.
+    /// Judged where the path really leads: `/tmp/lnk/Documents` with `lnk` pointing home is not a temp file.
     static func isRiskyLocation(_ path: String) -> Bool {
-        guard !hasParentComponent(path) else { return false }
+        resolved(path).map(isRisky) ?? false
+    }
+
+    /// Where a path really is: its folder with every symlink resolved, plus its last component as
+    /// written, so a symlinked item is judged and removed as the link itself, never its target.
+    /// nil (unusable: never risky, never the script, never removable) when the folder doesn't exist
+    /// or the path has a `..` in it. `realpath` keeps /private, which the risky list spells out.
+    static func resolved(_ path: String) -> String? {
+        guard path.hasPrefix("/"), !hasParentComponent(path) else { return nil }
         let path = standardized(path)
-        return hasPrefix(path, in: riskyLocations) || path.split(separator: "/").contains { $0.hasPrefix(".") && $0 != "." }
+        let name = (path as NSString).lastPathComponent
+        guard name != "/", let parent = PrivilegedRemover.realpathOf((path as NSString).deletingLastPathComponent) else { return nil }
+        return (parent == "/" ? "" : parent) + "/" + name
+    }
+
+    /// For a path already resolved.
+    private static func isRisky(_ path: String) -> Bool {
+        hasPrefix(path, in: riskyLocations) || path.split(separator: "/").contains { $0.hasPrefix(".") && $0 != "." }
     }
 
     private static func standardized(_ path: String) -> String { (path as NSString).standardizingPath }
@@ -76,7 +96,7 @@ enum Heuristics {
 
     /// The script an interpreter runs is its first absolute-path argument; later paths (logs, config) are data.
     private static func riskyScript(in item: LaunchItem) -> String? {
-        item.arguments.first { $0.hasPrefix("/") }.flatMap { isRiskyLocation($0) ? standardized($0) : nil }
+        item.arguments.first { $0.hasPrefix("/") }.flatMap(resolved).flatMap { isRisky($0) ? $0 : nil }
     }
 
     /// The `.app` folder a path lives in, if any.
