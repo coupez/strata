@@ -360,11 +360,39 @@ with `sudo chown root`) — done by the user, since it needs a password.
 
 Each milestone ends with a green build, passing tests, and a snapshot of the tab.
 
+## Refinements from verification (2026-09-30)
+
+Checked on this Mac while planning; these supersede the sections above where they differ.
+
+- **libyara 4.5.8 compiles Apple's live rules** (XProtect v5363: 569 rules incl. `XPScripts.yr`,
+  0.35 s) with only the `hash` module on CommonCrypto. Scanning the 603 main executables in
+  `/Applications` (3.5 GB) took 33 s single-threaded — ~9 s on 4 workers. The "revisit YARA-X"
+  risk is retired.
+- **Gatekeeper → static signature check.** `SecAssessment` can hit the network; instead use
+  `SecStaticCode` requirements offline: `anchor apple` (Apple) and `anchor apple generic`
+  (Developer ID / App Store). Apps that fail are **not** listed as threats (too noisy for
+  open-source apps); their row shows "Unidentified developer" instead. Launch items and
+  privacy clients still use the signature as a Suspicious signal.
+- **Apple's App Store apps are not `anchor apple`.** GarageBand (team `F3LWYJ7GM7`), iMovie
+  (`PTN9T2S29T`) and Pages/Numbers/Keynote (`74J34U3R6X`) are Developer-ID-style signed, so
+  bloatware matches bundle ID **and** that team ID.
+- **Package-manager paths are trusted.** Homebrew binaries are ad-hoc signed by design;
+  programs under `/opt/homebrew/`, `/usr/local/Cellar/`, `/usr/local/opt/`,
+  `/usr/local/Homebrew/`, `/opt/local/`, `/nix/store/` skip the unsigned-program heuristic.
+- **Leftovers also require the vendor to be gone.** An ID is not a leftover if any installed
+  app or live launch item shares its first two components (`com.google.Keystone` stays while
+  Chrome is installed).
+- **Privacy clients missing from disk** are shown in *Can watch you* only (nothing to remove).
+- **Admin prompt runs out of process** via `/usr/bin/osascript` (`do shell script … with
+  administrator privileges`) so the UI never blocks on the password dialog.
+- **Background items** exclude launch items already shown inside another group's finding.
+- **Selection survives re-classification**: the user's explicit checkbox choices persist when
+  the threshold changes or XProtect results arrive; defaults apply only to untouched findings.
+
 ## Open risks
 
-- **libyara vs. Apple's rule syntax** — Apple may use syntax newer than libyara 4.5.
-  Mitigated by the real-rules test, which is the first task of milestone 2; if it fails we
-  revisit YARA-X before building on it.
+- **libyara vs. future Apple rule syntax** — today's rules compile (see above); the
+  real-rules test catches a future break, and the tab degrades to "rules unavailable".
 - **App Management TCC** may block removing app bundles even with admin rights; handled by
   the guidance toast, verified manually.
 - **Leftover false positives** — mitigated by bundle-ID-only matching, Review risk, and no
