@@ -40,4 +40,4 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## TLSH (C port bundled inside libyara)
 
 - Location: [`Vendor/yara/libyara/tlshc`](Vendor/yara/libyara/tlshc) (`tlsh.c`, `tlsh_impl.c`, `tlsh_util.c` and headers), used by libyara's `elf` module (telfhash).
-- License: the libyara 4.5.8 release carries no separate TLSH license or notice file, and the TLSH sources have no license headers of their own. They are distributed as part of libyara under its BSD-3-Clause license, reproduced above.
+- License: the libyara 4.5.8 release carries no separate TLSH license or notice file, and the TLSH sources have no license headers of their own. No separate license file ships in the libyara 4.5.8 release for the TLSH C port; see upstream TLSH (<https://github.com/trendmicro/tlsh>) for its own terms.

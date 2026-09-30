@@ -80,7 +80,7 @@ Strata deletes real files. It tries hard to make that deliberate:
 - Nothing happens until the 5-second countdown finishes. Cancel with the button or <kbd>Esc</kbd>.
 - `/System`, `/usr`, `/bin`, your home folder itself, `~/Library`, `~/Documents` and similar can never be selected.
 - Cleanup items marked **Caution** or **Review** are never pre-selected.
-- Root-owned items (apps installed by a package, launch daemons) ask for your password once per batch. Only root-owned items in `/Applications`, `/Library/Launch*`, `/Library/PrivilegedHelperTools` and a few `/Library` support folders can be touched that way (never anything Apple's), each path is re-checked right before it's removed, and nothing is ever re-owned. Trashed root items land in a "Removed by Strata" folder in your Trash; emptying it asks for your password.
+- Root-owned items (apps installed by a package, launch daemons) ask for your password once per batch. Only root-owned items in `/Applications`, `/Library/Launch*`, `/Library/PrivilegedHelperTools` and a few `/Library` support folders can be touched that way (never Apple's system files: anything `com.apple.*`, `/Library/Application Support/Apple`, `/Applications/Utilities` — only Apple's optional apps and their sound libraries), each item's folder is re-validated (symlinks resolved) inside the root script right before removal, and nothing is ever re-owned. Trashed root items land in a "Removed by Strata" folder in your Trash; emptying it asks for your password.
 - In Apps & Threats only confirmed threats and dead launch items are pre-selected; running apps can't be selected.
 
 Still: have a backup, and read what you've selected before pressing Delete.
