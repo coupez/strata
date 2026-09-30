@@ -90,7 +90,9 @@ final class AppsModel {
         return rulesLoaded ? "No threats found. \(things)" : "Threat check unavailable. \(things)"
     }
 
-    var rulesNote: String? {
+    var rulesNote: String? { Self.rulesNote(rules: rules, skippedFiles: skippedFiles) }
+
+    nonisolated static func rulesNote(rules: RulesState, skippedFiles: Int) -> String? {
         switch rules {
         case .unknown:
             return nil
@@ -180,8 +182,9 @@ final class AppsModel {
         }.value
         let counter = ScanCounter()
         let poller = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(150))
+            while true {
+                // A cancelled sleep throws; stop then, so no stale progress lands after the scan.
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
                 guard let self, id == self.scanID else { return }
                 let done = counter.snapshot().done
                 self.status = "Scanning \(done.formatted()) of \(targets.count.formatted()) files with XProtect…"
@@ -212,8 +215,11 @@ final class AppsModel {
 
     func removalJob(trash: Bool) -> DeletionJob {
         // The scan's running flags go stale; check again so a freshly launched app is never removed.
-        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let runningApps = NSWorkspace.shared.runningApplications
+        let running = Set(runningApps.compactMap(\.bundleIdentifier))
+        // Bundles are covered too, so a running program outside the inventory (a threat hit) is never removed.
         let runningPaths = Set((input?.apps ?? []).filter { Classifier.isRunning($0, among: running) }.map(\.path))
+            .union(runningApps.compactMap { $0.bundleURL?.path })
         if input != nil, input?.running != running {
             input?.running = running
             Task { await classify() }
@@ -243,8 +249,10 @@ final class AppsModel {
                                        runningAppPaths: Set<String> = []) -> DeletionJob {
         var operations: [DeletionOperation] = []
         for finding in findings where !finding.isRunning {
-            let appIsRunning = finding.parts.contains { $0.kind == .app && runningAppPaths.contains($0.url.path) }
-            if appIsRunning { continue }
+            let touchesRunningApp = finding.parts.contains { part in
+                runningAppPaths.contains { part.url.path == $0 || part.url.path.hasPrefix($0 + "/") }
+            }
+            if touchesRunningApp { continue }
             for part in finding.parts {
                 // System daemons are booted out by the elevated script, which runs as root.
                 if case .launchItem(let label, let domain) = part.kind, domain != .systemDaemon {

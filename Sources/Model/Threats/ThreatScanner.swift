@@ -92,11 +92,13 @@ enum ThreatScanner {
             .map { directory.appendingPathComponent($0).path }
     }
 
-    /// Regular files under the size cap that are Mach-O binaries or scripts.
+    /// Regular files under the size cap that are Mach-O binaries or scripts. One we can't open (a root-only
+    /// daemon, say) is kept too, so the scan reports it as not scanned instead of silently passing it.
     static func isScannable(_ path: String) -> Bool {
         var info = stat()
-        guard stat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size > 0, Int64(info.st_size) <= maxFileSize,
-              let handle = FileHandle(forReadingAtPath: path) else { return false }
+        guard stat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size > 0,
+              Int64(info.st_size) <= maxFileSize else { return false }
+        guard let handle = FileHandle(forReadingAtPath: path) else { return true }
         defer { try? handle.close() }
         let head = [UInt8](handle.readData(ofLength: 4))
         guard head.count == 4 else { return false }

@@ -45,6 +45,31 @@ struct AppsModelTests {
         #expect(job.operations.map(\.label) == ["D.app"])
     }
 
+    @Test func removalJobSkipsAnythingInsideARunningBundle() {
+        let loose = finding("threat:/Users/u/Downloads/X.app", parts: [part("/Users/u/Downloads/X.app", 9, .file)], group: .threat)
+        let inner = finding("threat:inner", parts: [part("/Users/u/Downloads/Y.app/Contents/MacOS/y", 2, .file)], group: .threat)
+        let other = finding("threat:/tmp/z", parts: [part("/tmp/z", 1, .file)], group: .threat)
+        let job = AppsModel.removalJob(for: [loose, inner, other], trash: true, uid: 501,
+                                       runningAppPaths: ["/Users/u/Downloads/X.app", "/Users/u/Downloads/Y.app"])
+        #expect(job.operations.map(\.label) == ["z"])
+    }
+
+    @Test func rulesNoteCopy() {
+        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        let updated = date.formatted(.dateTime.day().month())
+        #expect(AppsModel.rulesNote(rules: .unknown, skippedFiles: 0) == nil)
+        #expect(AppsModel.rulesNote(rules: .loaded(version: 5363, updated: date), skippedFiles: 0)
+            == "Uses Apple's XProtect rules v5363, updated \(updated). No scanner catches everything.")
+        #expect(AppsModel.rulesNote(rules: .loaded(version: 5363, updated: nil), skippedFiles: 0)
+            == "Uses Apple's XProtect rules v5363. No scanner catches everything.")
+        #expect(AppsModel.rulesNote(rules: .loaded(version: 5363, updated: date), skippedFiles: 1)
+            == "Uses Apple's XProtect rules v5363, updated \(updated). No scanner catches everything. 1 file couldn't be scanned.")
+        #expect(AppsModel.rulesNote(rules: .loaded(version: 5363, updated: date), skippedFiles: 3)
+            == "Uses Apple's XProtect rules v5363, updated \(updated). No scanner catches everything. 3 files couldn't be scanned.")
+        #expect(AppsModel.rulesNote(rules: .unavailable("the rule engine didn't start"), skippedFiles: 2)
+            == "XProtect rules unavailable: the rule engine didn't start")
+    }
+
     @Test func summaryOnlyClaimsNoThreatsWhenTheRulesRan() {
         #expect(AppsModel.readySummary(threats: 0, removable: 3, rulesLoaded: true) == "No threats found. 3 things you could remove.")
         #expect(AppsModel.readySummary(threats: 0, removable: 1, rulesLoaded: false) == "Threat check unavailable. 1 thing you could remove.")

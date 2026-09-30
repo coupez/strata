@@ -37,6 +37,20 @@ struct ThreatScannerTests {
         #expect(targets.count == 4)
     }
 
+    @Test func unreadableFilesAreScannedAndCountedAsSkipped() throws {
+        let engine = try YaraEngine(source: "rule A { condition: false }")
+        let locked = dir.file("Loose/locked", "#!/bin/sh\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        dir.directory("Loose/folder")
+        dir.file("Loose/empty", "")
+        let targets = ThreatScanner.targets(apps: [], launchItems: [], looseFolders: [dir.url.appendingPathComponent("Loose")])
+        #expect(targets.map(\.lastPathComponent) == ["locked"])
+        let counter = ScanCounter()
+        ThreatScanner.scan(targets, engine: engine, counter: counter, isCancelled: { false })
+        #expect(counter.snapshot().done == 1)
+        #expect(counter.snapshot().skipped == 1)
+    }
+
     @Test func scansWrappedIOSApps() throws {
         let app = dir.directory("W.app")
         machO("W.app/Wrapper/W.app/W")
