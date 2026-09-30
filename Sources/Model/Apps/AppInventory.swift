@@ -28,11 +28,14 @@ enum AppInventory {
             let names = (try? fm.contentsOfDirectory(atPath: location.path)) ?? []
             for name in names.sorted() where !name.hasPrefix(".") {
                 let url = location.appendingPathComponent(name)
+                // Symlinks point at apps listed elsewhere (system apps, duplicates in subfolders).
+                if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { continue }
                 if name.hasSuffix(".app") {
                     result.append(url)
                 } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
                     let inner = (try? fm.contentsOfDirectory(atPath: url.path)) ?? []
                     result += inner.sorted().filter { $0.hasSuffix(".app") }.map { url.appendingPathComponent($0) }
+                        .filter { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true }
                 }
             }
         }

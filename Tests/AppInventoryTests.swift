@@ -58,4 +58,15 @@ struct AppInventoryTests {
         let apps = AppInventory.load(locations: [dir.url], usage: noUsage)
         #expect(apps.map(\.bundleID).sorted() == ["com.example.a", "com.example.b"])
     }
+
+    @Test func skipsSymlinkedApps() throws {
+        let real = dir.app("Real/Tool.app", id: "com.example.tool")
+        dir.directory("Apps")
+        try FileManager.default.createSymbolicLink(at: dir.url.appendingPathComponent("Apps/Tool.app"), withDestinationURL: real)
+        try FileManager.default.createSymbolicLink(at: dir.url.appendingPathComponent("Apps/Alias"), withDestinationURL: dir.url.appendingPathComponent("Real"))
+        dir.app("Apps/Sub/Inner.app", id: "com.example.inner")
+        try FileManager.default.createSymbolicLink(at: dir.url.appendingPathComponent("Apps/Sub/Link.app"), withDestinationURL: real)
+        let names = AppInventory.bundles(in: [dir.url.appendingPathComponent("Apps")]).map(\.lastPathComponent)
+        #expect(names == ["Inner.app"])
+    }
 }

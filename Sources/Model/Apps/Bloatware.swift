@@ -3,6 +3,9 @@ import Foundation
 enum Bloatware {
     static let garageBandID = "com.apple.garageband10"
     static let logicID = "com.apple.logic10"
+    static let mainStageID = "com.apple.mainstage3"
+    /// Apps that use the GarageBand/Logic content folders.
+    static let soundLibraryConsumerIDs: Set<String> = [logicID, mainStageID]
 
     /// Apple's optional App Store apps and the team IDs they're signed with. They aren't
     /// "anchor apple" signed, so the team ID is what proves they're Apple's.

@@ -103,8 +103,9 @@ struct Finding: Identifiable, Hashable, Sendable {
 
     var size: Int64 { parts.reduce(0) { $0 + $1.size } }
 
-    /// Only confirmed threats and launch items that can't run anyway start ticked.
+    /// Only confirmed threats and launch items that can't run anyway start ticked; running apps never do.
     var preselected: Bool {
+        if isRunning { return false }
         if let verdict { return verdict >= .adware }
         return group == .leftover && parts.allSatisfy(\.isLaunchItem)
     }

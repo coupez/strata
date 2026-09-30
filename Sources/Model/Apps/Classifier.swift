@@ -18,15 +18,18 @@ enum Classifier {
                          signature: (String) -> Signature = CodeSignature.check,
                          size: (URL) -> Int64 = { DirectorySizer.allocatedSize(atPath: $0.path) }) -> [Finding] {
         let cutoff = input.now.addingTimeInterval(-Double(days) * 86_400)
-        let logicInstalled = input.apps.contains { $0.bundleID == Bloatware.logicID }
         let garageBandInstalled = input.apps.contains { $0.bundleID == Bloatware.garageBandID }
+        // Logic and MainStage install the same content, so it's only bloat once neither is left.
+        let contentConsumerInstalled = input.apps.contains { Bloatware.soundLibraryConsumerIDs.contains($0.bundleID) }
+        var soundsAttached = false
 
         var supportByApp: [String: [SupportEntry]] = [:]
         for entry in input.support {
             if let owner = SupportFiles.owner(of: entry, among: input.apps) { supportByApp[owner.path, default: []].append(entry) }
         }
+        // Orphaned items are leftovers even when their app is installed; each path belongs to one finding.
         var launchByApp: [String: [LaunchItem]] = [:]
-        for item in input.launchItems {
+        for item in input.launchItems where !item.isOrphaned {
             if let owner = owner(of: item, among: input.apps) { launchByApp[owner.path, default: []].append(item) }
         }
 
@@ -34,30 +37,33 @@ enum Classifier {
         for app in input.apps where app.bundleID != input.ownID {
             let threatened = hits.contains { $0.primary == app.path || $0.primary.hasPrefix(app.path + "/") }
             let bloat = Bloatware.isBloatware(app, signature: signature)
-            let unused = !input.running.contains(app.bundleID) && isUnused(app, before: cutoff)
+            let running = isRunning(app, among: input.running)
+            let unused = !running && isUnused(app, before: cutoff)
             guard threatened || bloat || unused else { continue }
+            let appSignature = signature(app.path)
+            // Apple-signed system apps are never flagged, except the optional ones we list as bloatware.
+            if appSignature.kind == .apple, !bloat { continue }
 
             var parts = [FindingPart(url: app.url, size: app.size, kind: .app)]
             parts += (supportByApp[app.path] ?? []).map { FindingPart(url: $0.url, size: size($0.url), kind: .support) }
             parts += (launchByApp[app.path] ?? []).map { launchPart($0, size: size) }
-            if bloat, app.bundleID == Bloatware.garageBandID, !logicInstalled {
+            if bloat, app.bundleID == Bloatware.garageBandID, !contentConsumerInstalled, !soundsAttached {
+                soundsAttached = true
                 parts += input.soundLibraries.map { FindingPart(url: $0, size: size($0), kind: .file) }
             }
 
             var reasons = [usage(of: app, now: input.now)]
             if bloat { reasons.insert("Optional Apple app", at: 0) }
-            let appSignature = signature(app.path)
             if !appSignature.isTrusted { reasons.append(appSignature.summary) }
 
             findings.append(Finding(id: "app:" + app.path, group: bloat ? .bloatware : (unused ? .unused : .threat),
                                     title: app.name, reasons: reasons, iconPath: app.path, parts: parts,
-                                    risk: bloat ? .caution : .review, lastUsed: app.lastUsed,
-                                    isRunning: input.running.contains(app.bundleID)))
+                                    risk: bloat ? .caution : .review, lastUsed: app.lastUsed, isRunning: running))
         }
 
-        if !garageBandInstalled, !logicInstalled, !input.soundLibraries.isEmpty {
+        if !garageBandInstalled, !contentConsumerInstalled, !input.soundLibraries.isEmpty {
             findings.append(Finding(id: "bloat:sounds", group: .bloatware, title: "GarageBand & Logic sound library",
-                                    reasons: ["Loops and instruments only GarageBand and Logic use"], iconPath: nil,
+                                    reasons: ["Loops and instruments used by GarageBand, Logic and MainStage"], iconPath: nil,
                                     parts: input.soundLibraries.map { FindingPart(url: $0, size: size($0), kind: .file) },
                                     risk: .caution))
         }
@@ -71,7 +77,9 @@ enum Classifier {
             var reasons: [String] = []
             if parts.contains(where: { !$0.isLaunchItem }) { reasons.append("Left behind by an app that's no longer installed") }
             if !group.launchItems.isEmpty { reasons.append("Starts a program that no longer exists") }
-            findings.append(Finding(id: "leftover:" + group.key, group: .leftover, title: group.key, reasons: reasons,
+            // The key is lowercased for grouping; show the name as the app wrote it.
+            let title = group.entries.first?.bundleID ?? group.launchItems.first?.label ?? group.key
+            findings.append(Finding(id: "leftover:" + group.key, group: .leftover, title: title, reasons: reasons,
                                     iconPath: nil, parts: parts, risk: parts.allSatisfy(\.isLaunchItem) ? .safe : .review))
         }
 
@@ -96,8 +104,13 @@ enum Classifier {
     /// The installed app a launch item belongs to: by program location, associated ID, or label.
     static func owner(of item: LaunchItem, among apps: [InstalledApp]) -> InstalledApp? {
         if let program = item.program, let app = apps.first(where: { program.hasPrefix($0.path + "/") }) { return app }
-        if let id = item.associatedBundleID, let app = apps.first(where: { $0.bundleID == id }) { return app }
-        return apps.first { app in IDs.owns(app.bundleID, item.label) || app.nestedBundleIDs.contains { IDs.owns($0, item.label) } }
+        if let id = item.associatedBundleID, let app = IDs.bestOwner(of: id, among: apps) { return app }
+        return IDs.bestOwner(of: item.label, among: apps)
+    }
+
+    /// An app counts as running when it or one of its helpers is.
+    static func isRunning(_ app: InstalledApp, among running: Set<String>) -> Bool {
+        running.contains(app.bundleID) || app.nestedBundleIDs.contains { running.contains($0) }
     }
 
     static func isUnused(_ app: InstalledApp, before cutoff: Date) -> Bool {
@@ -114,25 +127,36 @@ enum Classifier {
         return "Never opened"
     }
 
-    /// Folds threat hits into the finding that already owns the path, or adds a new finding.
+    /// Folds threat hits into one finding per hit: the one that owns the primary path, or a new one.
+    /// The hit's other paths move out of whatever lower-priority finding held them.
     static func merge(_ hits: [ThreatHit], into findings: inout [Finding], size: (URL) -> Int64) {
-        for hit in hits {
+        for hit in hits where !hit.paths.isEmpty {
+            let target: Int
             if let index = findings.firstIndex(where: { $0.contains(hit.primary) }) {
-                findings[index].group = .threat
-                findings[index].verdict = max(findings[index].verdict ?? hit.verdict, hit.verdict)
-                findings[index].risk = .review
-                if !findings[index].reasons.contains(hit.reason) { findings[index].reasons.insert(hit.reason, at: 0) }
-                for path in hit.paths.dropFirst() where !findings.contains(where: { $0.contains(path) }) {
-                    let url = URL(fileURLWithPath: path)
-                    findings[index].parts.append(FindingPart(url: url, size: size(url), kind: .file))
-                }
+                target = index
+                findings[target].group = .threat
+                findings[target].verdict = max(findings[target].verdict ?? hit.verdict, hit.verdict)
+                if !findings[target].reasons.contains(hit.reason) { findings[target].reasons.insert(hit.reason, at: 0) }
             } else {
-                let paths = hit.paths.filter { path in !findings.contains { $0.contains(path) } }
                 findings.append(Finding(id: "threat:" + hit.primary, group: .threat, verdict: hit.verdict, title: hit.title,
                                         reasons: [hit.reason], iconPath: hit.primary.hasSuffix(".app") ? hit.primary : nil,
-                                        parts: paths.map { FindingPart(url: URL(fileURLWithPath: $0), size: size(URL(fileURLWithPath: $0)), kind: .file) },
-                                        risk: .review))
+                                        parts: [], risk: .review))
+                target = findings.count - 1
             }
+            findings[target].risk = findings[target].verdict == .adware ? .caution : .review
+
+            for path in hit.paths where !findings[target].contains(path) {
+                var moved: FindingPart?
+                for index in findings.indices where index != target {
+                    guard let part = findings[index].parts.first(where: { path == $0.url.path || path.hasPrefix($0.url.path + "/") }) else { continue }
+                    findings[index].parts.removeAll { $0.url == part.url }
+                    moved = part
+                    break
+                }
+                let url = URL(fileURLWithPath: path)
+                findings[target].parts.append(moved ?? FindingPart(url: url, size: size(url), kind: .file))
+            }
+            findings.removeAll { $0.parts.isEmpty }
         }
     }
 

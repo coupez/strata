@@ -50,15 +50,7 @@ enum SupportFiles {
     /// The installed app an entry belongs to: by bundle ID (including helpers), or an
     /// Application Support folder named exactly like the app.
     static func owner(of entry: SupportEntry, among apps: [InstalledApp]) -> InstalledApp? {
-        if let id = entry.bundleID {
-            // Closest match wins, so Chrome Canary's data is never attributed to Chrome (or vice versa).
-            var best: (app: InstalledApp, score: Int)?
-            for app in apps {
-                guard let score = ([app.bundleID] + app.nestedBundleIDs).compactMap({ IDs.matchScore(owner: $0, id: id) }).max() else { continue }
-                if score > (best?.score ?? -1) { best = (app, score) }
-            }
-            return best?.app
-        }
+        if let id = entry.bundleID { return IDs.bestOwner(of: id, among: apps) }
         guard entry.url.deletingLastPathComponent().lastPathComponent == "Application Support" else { return nil }
         return apps.first { $0.name == entry.name }
     }
@@ -79,6 +71,17 @@ enum IDs {
         if id.hasPrefix(owner + ".") { return owner.count }
         if owner.hasPrefix(id + ".") { return 0 }
         return nil
+    }
+
+    /// The app whose bundle or helper IDs match `id` most closely, so Chrome Canary's data is never
+    /// attributed to Chrome (or vice versa). Ties go to the first app.
+    static func bestOwner(of id: String, among apps: [InstalledApp]) -> InstalledApp? {
+        var best: (app: InstalledApp, score: Int)?
+        for app in apps {
+            guard let score = ([app.bundleID] + app.nestedBundleIDs).compactMap({ matchScore(owner: $0, id: id) }).max() else { continue }
+            if score > (best?.score ?? -1) { best = (app, score) }
+        }
+        return best?.app
     }
 
     /// "com.microsoft.EdgeUpdater.update" → "com.microsoft"

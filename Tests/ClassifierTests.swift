@@ -140,4 +140,100 @@ struct ClassifierTests {
         let found = classify(input(apps: [app]), signature: { _ in Signature(kind: .unsigned, teamID: nil) })
         #expect(found.first?.reasons.last == "Not signed")
     }
+
+    // MARK: Fix round 1
+
+    static let appleSigned: (String) -> Signature = { _ in Signature(kind: .identified, teamID: "F3LWYJ7GM7") }
+
+    @Test func orphanedItemsStayOutOfInstalledAppFindings() {
+        let app = makeApp("/Applications/A.app", id: "com.a", lastUsed: days(400))
+        let orphan = makeItem("com.a.updater", orphaned: true)
+        let found = classify(input(apps: [app], items: [orphan]))
+        #expect(Set(found.map(\.group)) == [.unused, .leftover])
+        let paths = found.flatMap { $0.parts.map(\.url.path) }
+        #expect(paths.count == Set(paths).count)
+        #expect(found.filter { $0.group == .unused }.first?.parts.map(\.kind) == [.app])
+        #expect(found.filter { $0.group == .leftover }.first?.parts.map(\.url.path) == [orphan.plist.path])
+    }
+
+    @Test func threatHitMovesPathsOutOfOtherFindings() {
+        let item = makeItem("com.x.agent", program: "/Users/Shared/.x/agent")
+        let hit = ThreatHit(paths: ["/Users/Shared/.x/agent", item.plist.path], verdict: .suspicious, reason: "Hidden", title: "com.x")
+        let found = classify(input(items: [item]), hits: [hit])
+        #expect(found.count == 1)
+        #expect(found.first?.group == .threat)
+        #expect(Set(found.first?.parts.map(\.url.path) ?? []) == ["/Users/Shared/.x/agent", item.plist.path])
+        #expect(found.first?.parts.first { $0.url.path == item.plist.path }?.isLaunchItem == true)
+    }
+
+    @Test(arguments: [true, false])
+    func launchItemOwnerIsTheClosestApp(chromeFirst: Bool) {
+        let chrome = makeApp("/Applications/Google Chrome.app", id: "com.google.Chrome")
+        let canary = makeApp("/Applications/Google Chrome Canary.app", id: "com.google.Chrome.canary")
+        let item = makeItem("com.google.Chrome.canary.agent", program: "/usr/local/bin/agent")
+        let owner = Classifier.owner(of: item, among: chromeFirst ? [chrome, canary] : [canary, chrome])
+        #expect(owner?.bundleID == "com.google.Chrome.canary")
+        let associated = makeItem("other.label", program: nil, associated: "com.google.Chrome.canary.helper")
+        #expect(Classifier.owner(of: associated, among: chromeFirst ? [chrome, canary] : [canary, chrome])?.bundleID == "com.google.Chrome.canary")
+    }
+
+    @Test func appWithRunningHelperIsNotUnused() {
+        let app = makeApp("/Applications/A.app", id: "com.a", lastUsed: days(400), nested: ["com.a.helper"])
+        #expect(classify(input(apps: [app], running: ["com.a.helper"])).isEmpty)
+        #expect(classify(input(apps: [app])).count == 1)
+    }
+
+    @Test func appleSignedAppsAreNeverFlagged() {
+        let old = makeApp("/Applications/Safari.app", id: "com.apple.Safari", lastUsed: days(400))
+        #expect(classify(input(apps: [old]), signature: { _ in Signature(kind: .apple, teamID: nil) }).isEmpty)
+        let garageBand = makeApp("/Applications/GarageBand.app", id: Bloatware.garageBandID, lastUsed: days(1))
+        #expect(classify(input(apps: [garageBand]), signature: { _ in Signature(kind: .apple, teamID: nil) }).map(\.group) == [.bloatware])
+    }
+
+    @Test func soundLibrariesBelongToMainStageToo() {
+        let sounds = [URL(fileURLWithPath: "/Library/Application Support/GarageBand")]
+        let garageBand = makeApp("/Applications/GarageBand.app", id: Bloatware.garageBandID, lastUsed: days(1))
+        let mainStage = makeApp("/Applications/MainStage.app", id: Bloatware.mainStageID, lastUsed: days(1))
+        let withGarageBand = classify(input(apps: [garageBand, mainStage], sounds: sounds), signature: Self.appleSigned)
+        #expect(withGarageBand.flatMap { $0.parts.map(\.url) } == [garageBand.url])
+        let alone = classify(input(apps: [mainStage], sounds: sounds), signature: Self.appleSigned)
+        #expect(alone.isEmpty)
+    }
+
+    @Test func soundLibrariesAttachToTheFirstGarageBandOnly() {
+        let sounds = [URL(fileURLWithPath: "/Library/Application Support/GarageBand")]
+        let apps = [makeApp("/Applications/GarageBand.app", id: Bloatware.garageBandID, lastUsed: days(1)),
+                    makeApp("/Users/me/Applications/GarageBand.app", id: Bloatware.garageBandID, lastUsed: days(1))]
+        let found = classify(input(apps: apps, sounds: sounds), signature: Self.appleSigned)
+        let paths = found.flatMap { $0.parts.map(\.url.path) }
+        #expect(found.count == 2)
+        #expect(paths.count == Set(paths).count)
+        #expect(paths.filter { $0 == sounds[0].path }.count == 1)
+    }
+
+    @Test func runningFindingsAreNeverPreselected() {
+        let running = Finding(id: "x", group: .threat, verdict: .malicious, title: "x", reasons: [], iconPath: nil,
+                              parts: [], risk: .review, isRunning: true)
+        #expect(!running.preselected)
+        var idle = running
+        idle.isRunning = false
+        #expect(idle.preselected)
+    }
+
+    @Test func adwareIsCautionAndOtherThreatsReview() {
+        func risk(_ verdict: Verdict) -> Risk? {
+            let hit = ThreatHit(paths: ["/Users/Shared/x"], verdict: verdict, reason: "r", title: "x")
+            return classify(input(), hits: [hit]).first?.risk
+        }
+        #expect(risk(.adware) == .caution)
+        #expect(risk(.malicious) == .review)
+        #expect(risk(.suspicious) == .review)
+    }
+
+    @Test func leftoverTitleKeepsOriginalCasing() {
+        let entry = SupportEntry(url: URL(fileURLWithPath: "/S/com.Gone.App"), bundleID: "com.Gone.App")
+        let finding = classify(input(support: [entry])).first
+        #expect(finding?.title == "com.Gone.App")
+        #expect(finding?.id == "leftover:com.gone.app")
+    }
 }
