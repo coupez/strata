@@ -113,6 +113,14 @@ struct Finding: Identifiable, Hashable, Sendable {
     func contains(_ path: String) -> Bool {
         parts.contains { path == $0.url.path || path.hasPrefix($0.url.path + "/") }
     }
+
+    /// Whether a part is, sits inside, or holds one of these bundles: removing any of them breaks a running app.
+    func touches(anyOf bundlePaths: Set<String>) -> Bool {
+        parts.contains { part in
+            let path = part.url.path
+            return bundlePaths.contains { path == $0 || path.hasPrefix($0 + "/") || $0.hasPrefix(path + "/") }
+        }
+    }
 }
 
 struct ThreatHit: Hashable, Sendable {

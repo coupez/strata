@@ -10,9 +10,9 @@ struct ClassifierTests {
     func days(_ count: Double) -> Date { now.addingTimeInterval(-count * 86_400) }
 
     func input(apps: [InstalledApp] = [], items: [LaunchItem] = [], support: [SupportEntry] = [],
-               running: Set<String> = [], sounds: [URL] = []) -> AppScanInput {
+               running: Set<String> = [], sounds: [URL] = [], runningBundles: Set<String> = []) -> AppScanInput {
         AppScanInput(apps: apps, launchItems: items, support: support, running: running,
-                     ownID: "com.lucascoupez.strata", now: now, soundLibraries: sounds)
+                     ownID: "com.lucascoupez.strata", now: now, soundLibraries: sounds, runningBundlePaths: runningBundles)
     }
 
     func classify(_ input: AppScanInput, days: Int = 90, hits: [ThreatHit] = [],
@@ -262,5 +262,22 @@ struct ClassifierTests {
         #expect(found.first?.parts.map(\.url.path) == ["/Users/Shared/.x"])
         #expect(found.first?.verdict == .adware)
         #expect(found.first?.risk == .caution)
+    }
+
+    // MARK: Final review
+
+    @Test func findingsTouchingARunningBundleAreRunning() throws {
+        let hits = [ThreatHit(paths: ["/Users/Shared/.x"], verdict: .malicious, reason: "a", title: "x"),
+                    ThreatHit(paths: ["/Users/u/Downloads/Y.app/Contents/MacOS/y"], verdict: .malicious, reason: "b", title: "y"),
+                    ThreatHit(paths: ["/Users/Shared/.z"], verdict: .malicious, reason: "c", title: "z")]
+        let running = input(runningBundles: ["/Users/Shared/.x/Evil.app", "/Users/u/Downloads/Y.app"])
+        let found = classify(running, hits: hits)
+        let byID = Dictionary(uniqueKeysWithValues: found.map { ($0.id, $0) })
+        let containing = try #require(byID["threat:/Users/Shared/.x"])
+        let inside = try #require(byID["threat:/Users/u/Downloads/Y.app/Contents/MacOS/y"])
+        let unrelated = try #require(byID["threat:/Users/Shared/.z"])
+        #expect(containing.isRunning && !containing.preselected)
+        #expect(inside.isRunning && !inside.preselected)
+        #expect(!unrelated.isRunning && unrelated.preselected)
     }
 }

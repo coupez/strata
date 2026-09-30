@@ -10,6 +10,8 @@ struct AppScanInput: Sendable {
     var now: Date
     /// GarageBand/Logic content folders that exist on this Mac.
     var soundLibraries: [URL]
+    /// Where running apps' bundles are, including ones outside the inventory.
+    var runningBundlePaths: Set<String> = []
 }
 
 /// Turns a scan into findings. Every path lands in at most one finding.
@@ -94,6 +96,10 @@ enum Classifier {
         }
 
         merge(hits, into: &findings, size: size)
+        // Also catches running programs outside the inventory, and folders holding a running app.
+        for index in findings.indices where findings[index].touches(anyOf: input.runningBundlePaths) {
+            findings[index].isRunning = true
+        }
         return findings.sorted {
             if $0.group != $1.group { return $0.group.order < $1.group.order }
             if $0.verdict != $1.verdict { return ($0.verdict ?? .suspicious) > ($1.verdict ?? .suspicious) }

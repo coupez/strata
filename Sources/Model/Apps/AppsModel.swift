@@ -3,7 +3,8 @@ import SwiftUI
 
 /// Gathers everything the Apps & Threats tab classifies. Runs off the main actor.
 enum AppScan {
-    static func gather(running: Set<String>, ownID: String, home: String = NSHomeDirectory(), now: Date = .now) -> AppScanInput {
+    static func gather(running: Set<String>, runningBundlePaths: Set<String>, ownID: String,
+                       home: String = NSHomeDirectory(), now: Date = .now) -> AppScanInput {
         let apps = AppInventory.load(locations: AppInventory.standardLocations(home: home))
         var locations: [String: URL] = [:]
         for app in apps where locations[app.bundleID] == nil { locations[app.bundleID] = app.url }
@@ -12,7 +13,15 @@ enum AppScan {
         }
         return AppScanInput(apps: apps, launchItems: launchItems,
                             support: SupportFiles.index(SupportFiles.standardFolders(home: home)),
-                            running: running, ownID: ownID, now: now, soundLibraries: Bloatware.soundLibraries())
+                            running: running, ownID: ownID, now: now, soundLibraries: Bloatware.soundLibraries(),
+                            runningBundlePaths: runningBundlePaths)
+    }
+
+    /// Bundle IDs and bundle locations of everything running now.
+    @MainActor
+    static func running() -> (ids: Set<String>, bundlePaths: Set<String>) {
+        let apps = NSWorkspace.shared.runningApplications
+        return (Set(apps.compactMap(\.bundleIdentifier)), Set(apps.compactMap { $0.bundleURL?.path }))
     }
 }
 
@@ -122,7 +131,7 @@ final class AppsModel {
         cancelFlag?.cancel()
         let flag = CancelFlag()
         cancelFlag = flag
-        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let running = AppScan.running()
         let ownID = Bundle.main.bundleIdentifier ?? "com.lucascoupez.strata"
         choices = [:]
         hits = []
@@ -133,7 +142,8 @@ final class AppsModel {
         withAnimation(.smooth) { phase = .scanning }
         Task {
             let (input, xprotect, grants) = await Task.detached(priority: .utility) {
-                (AppScan.gather(running: running, ownID: ownID), XProtectRules.locate(), PrivacyAccess.load(from: PrivacyAccess.databases()))
+                (AppScan.gather(running: running.ids, runningBundlePaths: running.bundlePaths, ownID: ownID),
+                 XProtectRules.locate(), PrivacyAccess.load(from: PrivacyAccess.databases()))
             }.value
             guard id == scanID else { return }
             self.input = input
@@ -215,13 +225,13 @@ final class AppsModel {
 
     func removalJob(trash: Bool) -> DeletionJob {
         // The scan's running flags go stale; check again so a freshly launched app is never removed.
-        let runningApps = NSWorkspace.shared.runningApplications
-        let running = Set(runningApps.compactMap(\.bundleIdentifier))
+        let (running, bundlePaths) = AppScan.running()
         // Bundles are covered too, so a running program outside the inventory (a threat hit) is never removed.
         let runningPaths = Set((input?.apps ?? []).filter { Classifier.isRunning($0, among: running) }.map(\.path))
-            .union(runningApps.compactMap { $0.bundleURL?.path })
-        if input != nil, input?.running != running {
+            .union(bundlePaths)
+        if input != nil, input?.running != running || input?.runningBundlePaths != bundlePaths {
             input?.running = running
+            input?.runningBundlePaths = bundlePaths
             Task { await classify() }
         }
         return Self.removalJob(for: findings.filter { selected.contains($0.id) }, trash: trash, uid: getuid(),
@@ -248,11 +258,8 @@ final class AppsModel {
     nonisolated static func removalJob(for findings: [Finding], trash: Bool, uid: uid_t,
                                        runningAppPaths: Set<String> = []) -> DeletionJob {
         var operations: [DeletionOperation] = []
-        for finding in findings where !finding.isRunning {
-            let touchesRunningApp = finding.parts.contains { part in
-                runningAppPaths.contains { part.url.path == $0 || part.url.path.hasPrefix($0 + "/") }
-            }
-            if touchesRunningApp { continue }
+        // Skips anything at, inside, or containing a running app bundle.
+        for finding in findings where !finding.isRunning && !finding.touches(anyOf: runningAppPaths) {
             for part in finding.parts {
                 // System daemons are booted out by the elevated script, which runs as root.
                 if case .launchItem(let label, let domain) = part.kind, domain != .systemDaemon {

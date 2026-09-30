@@ -54,6 +54,14 @@ struct AppsModelTests {
         #expect(job.operations.map(\.label) == ["z"])
     }
 
+    @Test func removalJobSkipsAPartThatContainsARunningBundle() {
+        let folder = finding("threat:/Users/Shared/.x", parts: [part("/Users/Shared/.x", 9, .file)], group: .threat)
+        let sibling = finding("threat:/Users/Shared/.xy", parts: [part("/Users/Shared/.xy", 1, .file)], group: .threat)
+        let job = AppsModel.removalJob(for: [folder, sibling], trash: true, uid: 501,
+                                       runningAppPaths: ["/Users/Shared/.x/Evil.app"])
+        #expect(job.operations.map(\.label) == [".xy"])
+    }
+
     @Test func rulesNoteCopy() {
         let date = Date(timeIntervalSince1970: 1_790_000_000)
         let updated = date.formatted(.dateTime.day().month())
