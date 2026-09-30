@@ -34,6 +34,18 @@ struct AppInventoryTests {
         #expect(installed.path == app.path)
     }
 
+    @Test func readsWrappedIOSApps() throws {
+        dir.plist("Wrapped.app/Wrapper/Wrapped.app/Info.plist",
+                  ["CFBundleIdentifier": "com.example.wrapped", "CFBundleShortVersionString": "2.0"])
+        let app = dir.url.appendingPathComponent("Wrapped.app")
+        try FileManager.default.createSymbolicLink(atPath: app.appendingPathComponent("WrappedBundle").path,
+                                                   withDestinationPath: "Wrapper/Wrapped.app")
+        let installed = try #require(AppInventory.read(app, usage: noUsage))
+        #expect(installed.bundleID == "com.example.wrapped")
+        #expect(installed.version == "2.0")
+        #expect(installed.name == "Wrapped")
+    }
+
     @Test func skipsBundlesWithoutIdentifier() {
         dir.file("Broken.app/Contents/MacOS/x")
         #expect(AppInventory.read(dir.url.appendingPathComponent("Broken.app"), usage: noUsage) == nil)

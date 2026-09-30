@@ -80,7 +80,11 @@ enum AppInventory {
     }
 
     static func infoPlist(of bundle: URL) -> [String: Any]? {
-        NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist")) as? [String: Any]
+        // iOS apps on Mac keep their Info.plist under WrappedBundle instead of Contents.
+        for relative in ["Contents/Info.plist", "WrappedBundle/Info.plist"] {
+            if let info = NSDictionary(contentsOf: bundle.appendingPathComponent(relative)) as? [String: Any] { return info }
+        }
+        return nil
     }
 }
 
