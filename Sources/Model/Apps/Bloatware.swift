@@ -17,9 +17,10 @@ enum Bloatware {
         "com.apple.iWork.Numbers": "74J34U3R6X",
     ]
 
+    /// Each one must pass `PrivilegedRemover.isAllowed`: "Apple Loops" itself is an allowed root, so its "Apple" folder is listed.
     static let soundLibraryPaths = [
         "/Library/Application Support/GarageBand", "/Library/Application Support/Logic",
-        "/Library/Audio/Apple Loops", "/Library/Audio/Impulse Responses/Apple",
+        "/Library/Audio/Apple Loops/Apple", "/Library/Audio/Impulse Responses/Apple",
     ]
 
     static func isBloatware(_ app: InstalledApp, signature: (String) -> Signature) -> Bool {

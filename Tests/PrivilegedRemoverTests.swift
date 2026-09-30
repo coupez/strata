@@ -27,6 +27,11 @@ struct PrivilegedRemoverTests {
         #expect(!PrivilegedRemover.isAllowed(path, resolve: identity))
     }
 
+    @Test(arguments: Bloatware.soundLibraryPaths)
+    func soundLibrariesCanBeRemovedAsRoot(path: String) {
+        #expect(PrivilegedRemover.isAllowed(path, resolve: identity))
+    }
+
     @Test func realResolverAcceptsExistingApplicationsChildren() {
         #expect(PrivilegedRemover.isAllowed("/Applications/Foo.app"))
         #expect(!PrivilegedRemover.isAllowed("/Applications/Missing/Foo.app"))
