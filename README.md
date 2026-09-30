@@ -29,6 +29,7 @@ who eats everything you delete.
 - **Shows it as layers.** Every ring is one level deeper. Click a segment to zoom in, click the center to go back. Colors follow the circle, so zoom transitions stay smooth and continuous.
 - **Deletes safely.** Tick items (or ⌘-click a segment), press Delete, and you get **5 seconds to change your mind** before anything is touched. Choose *Move to Trash* or *Delete Permanently*. System folders can't be selected at all.
 - **Recommends cleanups.** A second tab measures the usual suspects — app caches, Xcode DerivedData and simulators, npm/pnpm/bun/pip/uv/cargo/Go/Gradle caches, Homebrew, Docker images and volumes, stray `node_modules`, forgotten installers and huge files — each tagged **Safe**, **Caution** or **Review**.
+- **Checks your apps.** A third tab lists apps you haven't opened in months, Apple's optional apps and sound libraries, files and launch items left behind by apps you already deleted, and everything that starts on its own. It also runs **Apple's own XProtect malware rules** (read from your Mac, never bundled) over app binaries and launch items, flags known adware, suspicious launch items and untrusted programs allowed to watch your screen or keystrokes. Root-owned leftovers can be removed after a password prompt; trashed ones land in a "Removed by Strata" folder in the Trash, and emptying it asks for your password. No scanner catches everything, so treat it as a second opinion.
 - **Has a friend.** Nibble trails your cursor from a polite distance, hops when you click, narrates what's going on, falls asleep when you're idle, and munches on every file you delete. <kbd>⌘</kbd><kbd>⇧</kbd><kbd>M</kbd> hides it.
 
 <table>
@@ -56,6 +57,8 @@ cd strata
 open build/Strata.app
 ```
 
+Run the tests with `scripts/test.sh`. libyara is vendored in `Vendor/yara`; `scripts/vendor-yara.sh` re-fetches the pinned release.
+
 For a complete picture, give Strata **Full Disk Access** in *System Settings → Privacy & Security*. Without it, protected folders (Mail, Safari, other apps' containers) are skipped. The app links you there if access is missing.
 
 ## How it works
@@ -67,6 +70,8 @@ For a complete picture, give Strata **Full Disk Access** in *System Settings →
 | Deletion | [`Deletion.swift`](Sources/Model/Deletion.swift) | 5-second countdown, then a background pool removes up to 6 items at once. Progress is measured in bytes (and live free space), not item count. |
 | Cleanup | [`Cleanup.swift`](Sources/Model/Cleanup.swift) | Each recommendation is either a set of paths to remove or a tool's own cleanup command (`brew cleanup`, `docker system prune`, `simctl delete unavailable`…). |
 | Nibble | [`Mascot.swift`](Sources/Views/Mascot.swift) | A 16×14 pixel sprite with a spring-physics follower, drawn in a `TimelineView` overlay that never blocks clicks. |
+| Apps & Threats | [`Sources/Model/Apps`](Sources/Model/Apps), [`Sources/Model/Threats`](Sources/Model/Threats) | Pure scanners (apps, launch items, support files, signatures, XProtect, privacy grants) feed one `Classifier`. XProtect's YARA rules run through a vendored libyara on 4 threads. |
+| Admin removals | [`PrivilegedRemover.swift`](Sources/Model/Apps/PrivilegedRemover.swift) | Root-owned items you can't remove are retried after one password prompt per batch: allowlisted locations only, every path single-quoted and re-validated (`cd -P`) inside the root script, no `chown`. |
 
 ## Safety
 
@@ -75,9 +80,11 @@ Strata deletes real files. It tries hard to make that deliberate:
 - Nothing happens until the 5-second countdown finishes. Cancel with the button or <kbd>Esc</kbd>.
 - `/System`, `/usr`, `/bin`, your home folder itself, `~/Library`, `~/Documents` and similar can never be selected.
 - Cleanup items marked **Caution** or **Review** are never pre-selected.
+- Root-owned items (apps installed by a package, launch daemons) ask for your password once per batch. Only root-owned items in `/Applications`, `/Library/Launch*`, `/Library/PrivilegedHelperTools` and a few `/Library` support folders can be touched that way (never anything Apple's), each path is re-checked right before it's removed, and nothing is ever re-owned. Trashed root items land in a "Removed by Strata" folder in your Trash; emptying it asks for your password.
+- In Apps & Threats only confirmed threats and dead launch items are pre-selected; running apps can't be selected.
 
 Still: have a backup, and read what you've selected before pressing Delete.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Includes [libyara](https://github.com/VirusTotal/yara) 4.5.8, BSD-3-Clause — see [`Vendor/yara/COPYING`](Vendor/yara/COPYING) and [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
