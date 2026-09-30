@@ -10,7 +10,8 @@ struct AppsView: View {
                 AppsHeader()
 
                 if !model.hasFullDiskAccess {
-                    FullDiskAccessBanner().frame(maxWidth: .infinity)
+                    FullDiskAccessBanner(message: "Without Full Disk Access, some leftovers and the privacy check are skipped.")
+                        .frame(maxWidth: .infinity)
                 }
 
                 ForEach(FindingGroup.allCases) { group in
@@ -127,9 +128,10 @@ struct AppsHeader: View {
                     .help("How long an app must go unopened to count as unused")
                 }
 
+                // A scan mid-removal would replace the findings the removal is about to report back on.
                 Button { apps.scan() } label: { Label("Re-scan", systemImage: "arrow.clockwise") }
                     .buttonStyle(.glass)
-                    .disabled(apps.phase == .scanning)
+                    .disabled(apps.phase == .scanning || model.deletion.isBusy)
             }
         }
         .padding(24)

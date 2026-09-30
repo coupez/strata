@@ -120,11 +120,14 @@ enum ThreatScanner {
     /// A match inside a listed app removes the app; one on a launch item's program or script removes the
     /// plist and that file. Anything else is only reported when it can be safely removed (its `.app`, or
     /// the file itself), never a system or package-manager file.
-    static func hits(for matches: [(URL, [YaraMatch])], apps: [InstalledApp], launchItems: [LaunchItem]) -> [ThreatHit] {
+    static func hits(for matches: [(URL, [YaraMatch])], apps: [InstalledApp], launchItems: [LaunchItem],
+                     signature: (String) -> Signature = CodeSignature.check) -> [ThreatHit] {
         matches.compactMap { url, found in
             let path = url.path
             let reason = "Matches Apple's XProtect signature \(found.map(\.displayName).joined(separator: ", "))"
             if let app = apps.first(where: { path.hasPrefix($0.path + "/") }) {
+                // Apple-signed apps are never flagged, except the optional ones listed as bloatware.
+                if signature(app.path).kind == .apple, !Bloatware.isBloatware(app, signature: signature) { return nil }
                 return ThreatHit(paths: [app.path], verdict: .malicious, reason: reason, title: app.name)
             }
             if let item = launchItems.first(where: { $0.program == path || $0.arguments.contains(path) }) {

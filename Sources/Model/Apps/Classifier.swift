@@ -91,7 +91,7 @@ enum Classifier {
         let claimed = Set(findings.flatMap { $0.parts.map(\.url.path) })
         for item in input.launchItems where !claimed.contains(item.plist.path) && !item.label.hasPrefix("com.apple.") {
             let owner = owner(of: item, among: input.apps)
-            var reasons = [item.domain.title]
+            var reasons = [item.schedule]
             if let owner { reasons.append("Part of \(owner.name)") }
             if let program = item.program { reasons.append(signature(program).summary) }
             findings.append(Finding(id: "launch:" + item.plist.path, group: .background, title: item.label, reasons: reasons,

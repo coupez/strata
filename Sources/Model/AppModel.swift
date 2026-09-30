@@ -148,7 +148,8 @@ final class AppModel {
     func rescan() {
         switch tab {
         case .cleanup: Task { await cleanup.measureAll() }
-        case .apps: apps.scan()
+        // ⌘R too: a scan mid-removal would drop the findings the removal reports back on.
+        case .apps: if !deletion.isBusy { apps.scan() }
         case .explore: if let target { startScan(target) }
         }
     }

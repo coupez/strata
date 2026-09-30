@@ -124,10 +124,16 @@ enum Heuristics {
         item.arguments.first { $0.hasPrefix("/") }.flatMap(resolved).flatMap { isRisky($0) ? $0 : nil }
     }
 
-    /// The `.app` folder a path lives in, if any.
+    /// The outermost real `.app` bundle a path lives in, if any. A plain folder that merely ends in
+    /// `.app` (a website export, say) isn't one: removing it would take unrelated files along.
     private static func appBundle(containing path: String) -> String? {
-        guard let range = path.range(of: ".app/", options: .caseInsensitive) else { return nil }
-        return String(path[..<range.upperBound].dropLast())
+        var searchStart = path.startIndex
+        while let range = path.range(of: ".app/", options: .caseInsensitive, range: searchStart..<path.endIndex) {
+            let candidate = String(path[..<range.upperBound].dropLast())
+            if isDirectory(candidate + "/Contents") || DirectorySizer.exists(candidate + "/WrappedBundle") { return candidate }
+            searchStart = range.upperBound
+        }
+        return nil
     }
 
     private static func hasPrefix(_ path: String, in prefixes: [String]) -> Bool {

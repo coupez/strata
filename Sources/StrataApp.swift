@@ -60,7 +60,7 @@ struct ContentView: View {
                     }
                     .help(model.tab == .explore ? "Scan again" : model.tab == .apps ? "Scan apps again" : "Re-check recommendations")
                     .disabled((model.tab == .explore && (model.target == nil || model.phase == .scanning))
-                              || (model.tab == .apps && model.apps.phase == .scanning))
+                              || (model.tab == .apps && (model.apps.phase == .scanning || model.deletion.isBusy)))
                 }
             }
         }

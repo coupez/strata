@@ -84,7 +84,11 @@ enum PrivilegedRemover {
                        resolve: (String) -> String? = PrivilegedRemover.realpathOf) -> String {
         var lines = ["cd /"]
         if operations.contains(where: \.trash) {
-            lines.append("bin=$(/usr/bin/mktemp -d \(quote(trashDirectory + "/Removed by Strata.XXXXXX"))) || bin=''")
+            // The Trash is re-verified the same way, and mktemp runs inside it, so a Trash swapped for a
+            // symlink during the password prompt can't make root create the folder anywhere else.
+            let trash = quote(trashDirectory)
+            lines.append("if cd -P -- \(trash) 2>/dev/null && [ \"$(pwd -P)\" = \(trash) ] && bin=$(/usr/bin/mktemp -d './Removed by Strata.XXXXXX'); then bin=\(trash)/\"${bin#./}\"; else bin=''; fi")
+            lines.append("cd /")
         } else {
             lines.append("bin=''")
         }

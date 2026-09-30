@@ -469,6 +469,8 @@ struct CardLabel: View {
 
 struct FullDiskAccessBanner: View {
     @Environment(AppModel.self) private var model
+    /// What goes missing without it, for the tab showing the banner.
+    var message = "Without it, protected folders like Mail, Safari and other apps' containers are skipped."
 
     var body: some View {
         HStack(spacing: 14) {
@@ -477,7 +479,7 @@ struct FullDiskAccessBanner: View {
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Full Disk Access recommended").font(.system(size: 13, weight: .semibold))
-                Text("Without it, protected folders like Mail, Safari and other apps' containers are skipped.")
+                Text(message)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

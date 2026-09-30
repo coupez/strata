@@ -207,7 +207,12 @@ final class AppsModel {
         poller.cancel()
         guard id == scanID else { return }
         skippedFiles = counter.snapshot().skipped
-        hits += ThreatScanner.hits(for: counter.results, apps: input.apps, launchItems: input.launchItems)
+        // Checking the matched apps' signatures reads their code, so keep it off the main actor.
+        let found = await Task.detached(priority: .utility) {
+            ThreatScanner.hits(for: counter.results, apps: input.apps, launchItems: input.launchItems)
+        }.value
+        guard id == scanID else { return }
+        hits += found
         await classify()
     }
 

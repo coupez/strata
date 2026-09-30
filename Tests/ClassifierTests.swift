@@ -295,4 +295,18 @@ struct ClassifierTests {
                                 exists: { $0 == kept.path })
         #expect(attached.first?.parts.map(\.url) == [garageBand.url, kept])
     }
+
+    @Test func backgroundItemsSayWhenTheyRun() {
+        func title(_ domain: LaunchDomain, atLoad: Bool) -> String? {
+            let item = LaunchItem(plist: URL(fileURLWithPath: "/L/com.v.plist"), label: "com.v", domain: domain, program: "/x",
+                                  arguments: [], associatedBundleID: nil, runsAtLoad: atLoad, isOrphaned: false)
+            return classify(input(items: [item])).first { $0.group == .background }?.reasons.first
+        }
+        #expect(title(.userAgent, atLoad: true) == "Starts when you log in")
+        #expect(title(.systemAgent, atLoad: true) == "Starts when anyone logs in")
+        #expect(title(.systemDaemon, atLoad: true) == "Runs in the background as root")
+        #expect(title(.userAgent, atLoad: false) == "Runs on demand")
+        #expect(title(.systemAgent, atLoad: false) == "Runs on demand")
+        #expect(title(.systemDaemon, atLoad: false) == "Runs on demand as root")
+    }
 }

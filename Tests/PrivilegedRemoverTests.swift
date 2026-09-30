@@ -52,7 +52,8 @@ struct PrivilegedRemoverTests {
         ], trashDirectory: "/Users/me/.Trash", resolve: identity)
         #expect(script == [
             "cd /",
-            "bin=$(/usr/bin/mktemp -d '/Users/me/.Trash/Removed by Strata.XXXXXX') || bin=''",
+            "if cd -P -- '/Users/me/.Trash' 2>/dev/null && [ \"$(pwd -P)\" = '/Users/me/.Trash' ] && bin=$(/usr/bin/mktemp -d './Removed by Strata.XXXXXX'); then bin='/Users/me/.Trash'/\"${bin#./}\"; else bin=''; fi",
+            "cd /",
             "if cd -P -- '/Library/LaunchDaemons' 2>/dev/null && [ \"$(pwd -P)\" = '/Library/LaunchDaemons' ]; then",
             "/bin/launchctl bootout system '/Library/LaunchDaemons/com.x.plist' 2>/dev/null",
             "if [ -n \"$bin\" ] && /bin/mkdir -- \"$bin/0\" && /bin/mv -n -- './com.x.plist' \"$bin/0/\" && [ ! -e './com.x.plist' ] && [ ! -L './com.x.plist' ]; then echo OK 0; else echo FAIL 0; fi",
@@ -64,6 +65,44 @@ struct PrivilegedRemoverTests {
             "cd /",
         ].joined(separator: "\n"))
         #expect(!script.contains("chown"))
+    }
+
+    /// Runs the script's Trash setup as the current user (the one item fails vetting, so nothing is touched).
+    private func trashFolder(for trashDirectory: String) throws -> String {
+        let script = PrivilegedRemover.script(for: [ElevatedOperation(url: URL(fileURLWithPath: "/Applications/x.app"), trash: true)],
+                                              trashDirectory: trashDirectory, resolve: { _ in nil })
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script + "\necho \"BIN=$bin\""]
+        process.standardOutput = output
+        try process.run()
+        process.waitUntilExit()
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        #expect(text.hasPrefix("FAIL 0\n"))
+        return text.components(separatedBy: "BIN=").last?.trimmingCharacters(in: .newlines) ?? ""
+    }
+
+    @Test func trashFolderIsMadeInsideTheVerifiedTrash() throws {
+        let dir = TempDir()
+        // As in `run`, the Trash path is fully resolved (TempDir's /var is really /private/var).
+        let trash = try #require(PrivilegedRemover.realpathOf(dir.directory("Trash it's \"$x\"").path))
+        let bin = try trashFolder(for: trash)
+        #expect(bin.hasPrefix(trash + "/Removed by Strata."))
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: bin, isDirectory: &isDirectory) && isDirectory.boolValue)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: trash).count == 1)
+    }
+
+    @Test func trashFolderIsNeverMadeThroughASymlink() throws {
+        let dir = TempDir()
+        let root = try #require(PrivilegedRemover.realpathOf(dir.path))
+        let elsewhere = dir.directory("elsewhere")
+        let link = root + "/Trash"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: elsewhere.path)
+        #expect(try trashFolder(for: link) == "")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: elsewhere.path).isEmpty)
+        #expect(try trashFolder(for: root + "/missing") == "")
     }
 
     @Test func scriptNeverTrustsASecondResolution() {

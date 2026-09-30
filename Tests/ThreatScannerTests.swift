@@ -110,6 +110,36 @@ struct ThreatScannerTests {
         #expect(hits.map(\.title) == ["X.app"])
     }
 
+    @Test func aFolderNamedLikeAnAppIsNotABundle() {
+        let inner = dir.file("Loose/site.app/run.sh", "#!/bin/sh\n")
+        let hits = ThreatScanner.hits(for: [(inner, found)], apps: [], launchItems: [])
+        #expect(hits.map(\.paths) == [[real(inner)]])
+    }
+
+    @Test func wrappedIOSAppsCountAsBundles() throws {
+        let bundle = dir.directory("Loose/W.app")
+        let inner = dir.file("Loose/W.app/Wrapper/W.app/W", "#!/bin/sh\n")
+        try FileManager.default.createSymbolicLink(atPath: bundle.appendingPathComponent("WrappedBundle").path,
+                                                   withDestinationPath: "Wrapper/W.app")
+        let hits = ThreatScanner.hits(for: [(inner, found)], apps: [], launchItems: [])
+        #expect(hits.map(\.paths) == [[real(bundle)]])
+    }
+
+    @Test func appleSignedAppsGetNoHitUnlessTheyAreBloatware() {
+        let app = dir.app("Apps/Safari.app", id: "com.apple.Safari")
+        let garageBand = dir.app("Apps/GarageBand.app", id: Bloatware.garageBandID)
+        let matches = [(app.appendingPathComponent("Contents/MacOS/main"), found),
+                       (garageBand.appendingPathComponent("Contents/MacOS/main"), found)]
+        let apps = [InstalledApp(url: app, bundleID: "com.apple.Safari", name: "Safari", version: nil, nestedBundleIDs: [],
+                                 size: 1, lastUsed: nil, dateAdded: nil),
+                    InstalledApp(url: garageBand, bundleID: Bloatware.garageBandID, name: "GarageBand", version: nil,
+                                 nestedBundleIDs: [], size: 1, lastUsed: nil, dateAdded: nil)]
+        let apple: (String) -> Signature = { _ in Signature(kind: .apple, teamID: nil) }
+        #expect(ThreatScanner.hits(for: matches, apps: apps, launchItems: [], signature: apple).map(\.title) == ["GarageBand"])
+        let other: (String) -> Signature = { _ in Signature(kind: .identified, teamID: "T") }
+        #expect(ThreatScanner.hits(for: matches, apps: apps, launchItems: [], signature: other).map(\.title) == ["Safari", "GarageBand"])
+    }
+
     @Test func cancellationStopsEarly() throws {
         let engine = try YaraEngine(source: "rule A { condition: false }")
         let files = (0..<50).map { dir.file("f\($0).sh", "#!/bin/sh\n") }

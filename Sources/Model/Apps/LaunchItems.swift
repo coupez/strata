@@ -24,6 +24,12 @@ struct LaunchItem: Hashable, Sendable {
     let runsAtLoad: Bool
     /// Points at a program (or app) that no longer exists, so it can never run.
     let isOrphaned: Bool
+
+    /// When it runs: the domain's title only applies to items that start on their own.
+    var schedule: String {
+        if runsAtLoad { return domain.title }
+        return domain == .systemDaemon ? "Runs on demand as root" : "Runs on demand"
+    }
 }
 
 enum LaunchItems {
