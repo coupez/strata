@@ -162,8 +162,9 @@ final class DeletionController {
         var outcomes = await Task.detached(priority: .userInitiated) {
             await Deleter.performAll(operations, parallelism: Self.parallelism, progress: box)
         }.value
+        var elevated: Set<Int> = []
         if job.allowsElevation {
-            outcomes = await PrivilegedRemover.retry(operations, outcomes: outcomes)
+            (outcomes, elevated) = await PrivilegedRemover.retry(operations, outcomes: outcomes)
         }
         ticker.cancel()
 
@@ -180,8 +181,9 @@ final class DeletionController {
         bytesDone = job.totalBytes
         inFlight = []
 
-        let blocked = zip(operations, outcomes).contains { operation, outcome in
-            guard case .failed = outcome, let path = operation.url?.path else { return false }
+        // Only after a real admin attempt: a cancelled prompt says nothing about App Management.
+        let blocked = zip(operations, outcomes).enumerated().contains { index, pair in
+            guard elevated.contains(index), case .failed = pair.1, let path = pair.0.url?.path else { return false }
             return path.hasPrefix("/Applications/") && path.hasSuffix(".app") && DirectorySizer.exists(path)
         }
         let result = DeletionResult(outcomes: outcomes, freedBytes: freed, failures: failures,
