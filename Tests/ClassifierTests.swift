@@ -15,9 +15,10 @@ struct ClassifierTests {
                      ownID: "com.lucascoupez.strata", now: now, soundLibraries: sounds, runningBundlePaths: runningBundles)
     }
 
+    /// Paths here are made up, so everything exists unless a test says otherwise.
     func classify(_ input: AppScanInput, days: Int = 90, hits: [ThreatHit] = [],
-                  signature: ((String) -> Signature)? = nil) -> [Finding] {
-        Classifier.findings(input, unusedAfter: days, hits: hits, signature: signature ?? trusted, size: size)
+                  signature: ((String) -> Signature)? = nil, exists: @escaping (String) -> Bool = { _ in true }) -> [Finding] {
+        Classifier.findings(input, unusedAfter: days, hits: hits, signature: signature ?? trusted, size: size, exists: exists)
     }
 
     @Test func unusedAppsRespectTheThreshold() {
@@ -279,5 +280,19 @@ struct ClassifierTests {
         #expect(containing.isRunning && !containing.preselected)
         #expect(inside.isRunning && !inside.preselected)
         #expect(!unrelated.isRunning && unrelated.preselected)
+    }
+
+    @Test func removedSoundLibrariesAreIgnored() {
+        let kept = URL(fileURLWithPath: "/Library/Application Support/GarageBand")
+        let removed = URL(fileURLWithPath: "/Library/Audio/Apple Loops/Apple")
+        let some = classify(input(sounds: [kept, removed]), exists: { $0 == kept.path })
+        #expect(some.map(\.id) == ["bloat:sounds"])
+        #expect(some.first?.parts.map(\.url) == [kept])
+        #expect(classify(input(sounds: [kept, removed]), exists: { _ in false }).isEmpty)
+
+        let garageBand = makeApp("/Applications/GarageBand.app", id: Bloatware.garageBandID, lastUsed: days(1))
+        let attached = classify(input(apps: [garageBand], sounds: [kept, removed]), signature: Self.appleSigned,
+                                exists: { $0 == kept.path })
+        #expect(attached.first?.parts.map(\.url) == [garageBand.url, kept])
     }
 }

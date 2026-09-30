@@ -18,12 +18,15 @@ struct AppScanInput: Sendable {
 enum Classifier {
     static func findings(_ input: AppScanInput, unusedAfter days: Int, hits: [ThreatHit] = [],
                          signature: (String) -> Signature = CodeSignature.check,
-                         size: (URL) -> Int64 = { DirectorySizer.allocatedSize(atPath: $0.path) }) -> [Finding] {
+                         size: (URL) -> Int64 = { DirectorySizer.allocatedSize(atPath: $0.path) },
+                         exists: (String) -> Bool = { !PathProbe.isGone($0) }) -> [Finding] {
         let cutoff = input.now.addingTimeInterval(-Double(days) * 86_400)
         let garageBandInstalled = input.apps.contains { $0.bundleID == Bloatware.garageBandID }
         // Logic and MainStage install the same content, so it's only bloat once neither is left.
         let contentConsumerInstalled = input.apps.contains { Bloatware.soundLibraryConsumerIDs.contains($0.bundleID) }
         var soundsAttached = false
+        // The scan's list can be stale: a library removed since must not come back as an empty finding.
+        let soundLibraries = input.soundLibraries.filter { exists($0.path) }
 
         var supportByApp: [String: [SupportEntry]] = [:]
         for entry in input.support {
@@ -51,7 +54,7 @@ enum Classifier {
             parts += (launchByApp[app.path] ?? []).map { launchPart($0, size: size) }
             if bloat, app.bundleID == Bloatware.garageBandID, !contentConsumerInstalled, !soundsAttached {
                 soundsAttached = true
-                parts += input.soundLibraries.map { FindingPart(url: $0, size: size($0), kind: .file) }
+                parts += soundLibraries.map { FindingPart(url: $0, size: size($0), kind: .file) }
             }
 
             var reasons = [usage(of: app, now: input.now)]
@@ -63,10 +66,10 @@ enum Classifier {
                                     risk: bloat ? .caution : .review, lastUsed: app.lastUsed, isRunning: running))
         }
 
-        if !garageBandInstalled, !contentConsumerInstalled, !input.soundLibraries.isEmpty {
+        if !garageBandInstalled, !contentConsumerInstalled, !soundLibraries.isEmpty {
             findings.append(Finding(id: "bloat:sounds", group: .bloatware, title: "GarageBand & Logic sound library",
                                     reasons: ["Loops and instruments used by GarageBand, Logic and MainStage"], iconPath: nil,
-                                    parts: input.soundLibraries.map { FindingPart(url: $0, size: size($0), kind: .file) },
+                                    parts: soundLibraries.map { FindingPart(url: $0, size: size($0), kind: .file) },
                                     risk: .caution))
         }
 

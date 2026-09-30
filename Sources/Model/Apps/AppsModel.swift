@@ -247,6 +247,7 @@ final class AppsModel {
         input?.apps.removeAll { gone.contains($0.path) }
         input?.launchItems.removeAll { gone.contains($0.plist.path) }
         input?.support.removeAll { gone.contains($0.url.path) }
+        input?.soundLibraries.removeAll { gone.contains($0.path) }
         hits.removeAll { gone.contains($0.primary) }
         Task { await classify() }
     }
