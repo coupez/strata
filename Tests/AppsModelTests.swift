@@ -38,6 +38,13 @@ struct AppsModelTests {
         if case .remove(let url) = job.operations[0].kind { #expect(url.path == "/Applications/X.app") } else { Issue.record("Expected .remove") }
     }
 
+    @Test func removalJobSkipsAppsRunningAtRemovalTime() {
+        let stale = finding("app:C", parts: [part("/Applications/C.app", 7, .app), part("/u/Library/Caches/com.c", 1, .support)])
+        let other = finding("app:D", parts: [part("/Applications/D.app", 3, .app)])
+        let job = AppsModel.removalJob(for: [stale, other], trash: true, uid: 501, runningAppPaths: ["/Applications/C.app"])
+        #expect(job.operations.map(\.label) == ["D.app"])
+    }
+
     @Test func selectionKeepsUserChoices() {
         let a = finding("a", verdict: .malicious, group: .threat)
         let b = finding("b")

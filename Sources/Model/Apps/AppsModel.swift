@@ -31,7 +31,10 @@ final class AppsModel {
     private(set) var findings: [Finding] = []
     private(set) var selected: Set<String> = []
     private(set) var expanded: Set<String> = []
-    var unusedDays: Int = UserDefaults.standard.object(forKey: AppsModel.unusedKey) as? Int ?? 90 {
+    var unusedDays: Int = {
+        let stored = UserDefaults.standard.object(forKey: AppsModel.unusedKey) as? Int
+        return stored.flatMap { AppsModel.unusedChoices.contains($0) ? $0 : nil } ?? 90
+    }() {
         didSet {
             guard unusedDays != oldValue else { return }
             UserDefaults.standard.set(unusedDays, forKey: Self.unusedKey)
@@ -49,7 +52,9 @@ final class AppsModel {
 
     func findings(in group: FindingGroup) -> [Finding] { findings.filter { $0.group == group } }
     var threatCount: Int { findings.filter { $0.group == .threat }.count }
-    var removableBytes: Int64 { findings.filter { $0.group != .background }.reduce(0) { $0 + $1.size } }
+    /// Background items are listed but never counted as reclaimable.
+    private var removable: [Finding] { findings.filter { $0.group != .background } }
+    var removableBytes: Int64 { removable.reduce(0) { $0 + $1.size } }
     var selectedBytes: Int64 { findings.reduce(0) { selected.contains($1.id) ? $0 + $1.size : $0 } }
 
     var summary: String {
@@ -59,7 +64,7 @@ final class AppsModel {
         case .ready:
             threatCount > 0
                 ? "\(threatCount) possible threat\(threatCount == 1 ? "" : "s") found. Review them first."
-                : "No threats found. \(findings.count) thing\(findings.count == 1 ? "" : "s") you could remove."
+                : "No threats found. \(removable.count) thing\(removable.count == 1 ? "" : "s") you could remove."
         }
     }
 
@@ -107,16 +112,20 @@ final class AppsModel {
     }
 
     func removalJob(trash: Bool) -> DeletionJob {
-        Self.removalJob(for: findings.filter { selected.contains($0.id) }, trash: trash, uid: getuid())
+        // The scan's running flags go stale; check again so a freshly launched app is never removed.
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let runningPaths = Set((input?.apps ?? []).filter { Classifier.isRunning($0, among: running) }.map(\.path))
+        if input != nil, input?.running != running {
+            input?.running = running
+            Task { await classify() }
+        }
+        return Self.removalJob(for: findings.filter { selected.contains($0.id) }, trash: trash, uid: getuid(),
+                               runningAppPaths: runningPaths)
     }
 
     func didRemove(_ job: DeletionJob, result: DeletionResult) {
-        var removed: [URL] = []
-        for (operation, outcome) in zip(job.operations, result.outcomes) {
-            guard let url = operation.url else { continue }
-            if case .failed = outcome { continue }
-            removed.append(url)
-        }
+        // A partial or failed removal may still have deleted things, so trust the disk, not the outcome.
+        let removed = job.operations.compactMap(\.url).filter { !DirectorySizer.exists($0.path) }
         onItemsRemoved?(removed)
         let gone = Set(removed.map(\.path))
         // Keep the cached scan in step so re-classifying doesn't bring removed things back.
@@ -124,19 +133,19 @@ final class AppsModel {
         input?.launchItems.removeAll { gone.contains($0.plist.path) }
         input?.support.removeAll { gone.contains($0.url.path) }
         hits.removeAll { gone.contains($0.primary) }
-        withAnimation(.smooth) {
-            findings.removeAll { finding in finding.parts.allSatisfy { gone.contains($0.url.path) } }
-            selected = Self.selection(for: findings, choices: choices)
-        }
+        Task { await classify() }
     }
 
     nonisolated static func selection(for findings: [Finding], choices: [String: Bool]) -> Set<String> {
         Set(findings.filter { !$0.isRunning && (choices[$0.id] ?? $0.preselected) }.map(\.id))
     }
 
-    nonisolated static func removalJob(for findings: [Finding], trash: Bool, uid: uid_t) -> DeletionJob {
+    nonisolated static func removalJob(for findings: [Finding], trash: Bool, uid: uid_t,
+                                       runningAppPaths: Set<String> = []) -> DeletionJob {
         var operations: [DeletionOperation] = []
         for finding in findings where !finding.isRunning {
+            let appIsRunning = finding.parts.contains { $0.kind == .app && runningAppPaths.contains($0.url.path) }
+            if appIsRunning { continue }
             for part in finding.parts {
                 // System daemons are booted out by the elevated script, which runs as root.
                 if case .launchItem(let label, let domain) = part.kind, domain != .systemDaemon {

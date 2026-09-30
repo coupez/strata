@@ -93,7 +93,7 @@ struct AppsHeader: View {
 
             VStack(alignment: .trailing, spacing: 10) {
                 Button { model.requestAppRemoval() } label: {
-                    Label("Remove \(apps.selectedBytes.bytes)", systemImage: "trash.fill")
+                    Label(apps.selected.isEmpty ? "Remove" : "Remove \(apps.selectedBytes.bytes)", systemImage: "trash.fill")
                         .fontWeight(.semibold)
                         .contentTransition(.numericText())
                 }
@@ -114,6 +114,7 @@ struct AppsHeader: View {
                         ForEach(AppsModel.unusedChoices, id: \.self) { Text("\($0) days").tag($0) }
                     }
                     .fixedSize()
+                    .disabled(apps.phase == .scanning)
                     .help("How long an app must go unopened to count as unused")
                 }
 
