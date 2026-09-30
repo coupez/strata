@@ -27,6 +27,22 @@ struct XProtectRulesTests {
         #expect(info.updated != nil)
     }
 
+    @Test func nonFiniteOrHugeVersionsAreIgnored() throws {
+        let good = bundle("Good.bundle", version: "5363")
+        let huge = bundle("Huge.bundle", version: "1e30")
+        let inf = bundle("Inf.bundle", version: "inf")
+        let nan = bundle("Nan.bundle", version: "nan")
+        let info = try #require(XProtectRules.locate([huge, inf, nan, good]))
+        #expect(info.bundle == good)
+        #expect(XProtectRules.read(huge) == nil)
+    }
+
+    @Test func equalVersionsKeepTheEarlierCandidate() throws {
+        let first = bundle("First.bundle", version: "5363")
+        let second = bundle("Second.bundle", version: "5363")
+        #expect(try #require(XProtectRules.locate([first, second])).bundle == first)
+    }
+
     @Test func nothingReadableMeansNil() {
         #expect(XProtectRules.locate([dir.url.appendingPathComponent("none")]) == nil)
     }

@@ -28,7 +28,7 @@ enum XProtectRules {
         guard FileManager.default.isReadableFile(atPath: yara.path),
               let info = NSDictionary(contentsOf: contents.appendingPathComponent("Info.plist")) as? [String: Any],
               let text = info["CFBundleShortVersionString"] as? String,
-              let version = Int(text) ?? Double(text).map({ Int($0) }) else { return nil }
+              let version = Int(text) ?? Double(text).flatMap({ Int(exactly: $0) }) else { return nil }
         let scripts = resources.appendingPathComponent("XPScripts.yr")
         let files = [yara] + (FileManager.default.isReadableFile(atPath: scripts.path) ? [scripts] : [])
         let updated = (try? FileManager.default.attributesOfItem(atPath: yara.path))?[.modificationDate] as? Date
