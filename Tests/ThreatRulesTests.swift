@@ -101,6 +101,20 @@ struct ThreatRulesTests {
             == ["/L/com.x.plist"])
     }
 
+    @Test func dotDotPathsAreNeverTheScriptNorRemovable() {
+        let sneaky = makeItem("com.x", program: "/bin/bash", arguments: ["/tmp/../Users/me/Documents"])
+        #expect(Heuristics.reasons(for: sneaky, signature: apple).isEmpty)
+        #expect(Heuristics.removablePaths(of: sneaky, signature: apple) == ["/L/com.x.plist"])
+        #expect(!Heuristics.isRiskyLocation("/tmp/../Users/me/Documents"))
+
+        let adware = makeItem("com.vsearch.agent", program: "/tmp/../Users/me/bin/x")
+        let paths = Heuristics.removablePaths(of: adware, signature: unsigned)
+        #expect(paths == ["/L/com.vsearch.agent.plist"])
+        #expect(!paths.contains { $0.contains("..") })
+        // Judged by where it really is, not by the path as written.
+        #expect(Heuristics.reasons(for: adware, signature: unsigned) == ["Program isn't signed"])
+    }
+
     @Test func staticHitsCoverAdwareBlockedExtensionsAndSuspiciousItems() {
         let adware = makeApp("/Applications/MacKeeper.app", id: "com.mackeeper.MacKeeper")
         let blocked = makeApp("/Applications/Search.app", id: "com.example.search", nested: ["com.searchnt.safari"])

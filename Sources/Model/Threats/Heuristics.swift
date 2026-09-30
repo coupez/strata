@@ -11,7 +11,8 @@ enum Heuristics {
     static let interpreterFamilies = ["python", "perl", "ruby"]
 
     static func reasons(for item: LaunchItem, signature: (String) -> Signature) -> [String] {
-        guard let program = item.program, !item.isOrphaned else { return [] }
+        guard let raw = item.program, !item.isOrphaned else { return [] }
+        let program = standardized(raw)
         if isGenuineInterpreter(program, signature: signature) {
             guard let script = riskyScript(in: item) else { return [] }
             let name = (program as NSString).lastPathComponent.lowercased()
@@ -38,23 +39,30 @@ enum Heuristics {
     /// app bundle sitting in a risky folder is removed whole rather than just its executable.
     static func removablePaths(of item: LaunchItem, signature: (String) -> Signature) -> [String] {
         var paths = [item.plist.path]
-        guard let program = item.program else { return paths }
+        guard let raw = item.program else { return paths }
+        let program = standardized(raw)
         if isGenuineInterpreter(program, signature: signature) {
             if let script = riskyScript(in: item) { paths.append(script) }
         } else if hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) {
             // Belongs to macOS or a package manager.
         } else if let bundle = appBundle(containing: program) {
-            if isRiskyLocation(bundle), !signature(program).isTrusted { paths.append(bundle) }
-        } else {
+            if !hasParentComponent(raw), isRiskyLocation(bundle), !signature(program).isTrusted { paths.append(bundle) }
+        } else if !hasParentComponent(raw) {
             paths.append(program)
         }
         return paths
     }
 
+    /// A path with a `..` in it is unusable: `/tmp/../Users/me/Documents` must never look like a temp file.
     static func isRiskyLocation(_ path: String) -> Bool {
-        hasPrefix(path, in: riskyLocations)
-            || path.split(separator: "/").contains { $0.hasPrefix(".") && $0 != "." && $0 != ".." }
+        guard !hasParentComponent(path) else { return false }
+        let path = standardized(path)
+        return hasPrefix(path, in: riskyLocations) || path.split(separator: "/").contains { $0.hasPrefix(".") && $0 != "." }
     }
+
+    private static func standardized(_ path: String) -> String { (path as NSString).standardizingPath }
+
+    private static func hasParentComponent(_ path: String) -> Bool { path.split(separator: "/").contains("..") }
 
     /// A shell or scripting runtime that macOS or a package manager installed (or a developer signed).
     /// A file merely named `bash` in /tmp is a program, not an interpreter.
@@ -68,7 +76,7 @@ enum Heuristics {
 
     /// The script an interpreter runs is its first absolute-path argument; later paths (logs, config) are data.
     private static func riskyScript(in item: LaunchItem) -> String? {
-        item.arguments.first { $0.hasPrefix("/") }.flatMap { isRiskyLocation($0) ? $0 : nil }
+        item.arguments.first { $0.hasPrefix("/") }.flatMap { isRiskyLocation($0) ? standardized($0) : nil }
     }
 
     /// The `.app` folder a path lives in, if any.
