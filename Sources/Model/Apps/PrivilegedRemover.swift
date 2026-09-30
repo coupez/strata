@@ -115,12 +115,15 @@ enum PrivilegedRemover {
         return lines.joined(separator: "\n")
     }
 
-    static func appleScript(for script: String) -> String {
+    /// The prompt names Strata; without one macOS says "osascript wants to make changes".
+    static func appleScript(for script: String, itemCount: Int) -> String {
         let escaped = script
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
-        return "do shell script \"\(escaped)\" with administrator privileges without altering line endings"
+        let items = itemCount == 1 ? "1 item that needs" : "\(itemCount) items that need"
+        return "do shell script \"\(escaped)\" with prompt \"Strata wants to remove \(items) administrator access.\""
+            + " with administrator privileges without altering line endings"
     }
 
     static func parse(_ output: String, count: Int) -> [Bool] {
@@ -156,7 +159,7 @@ enum PrivilegedRemover {
         guard !included.isEmpty else { return .failed }
 
         let script = script(for: included.map { operations[$0] }, trashDirectory: trashDirectory ?? home + "/.Trash")
-        let run = await Shell.run("/usr/bin/osascript", ["-e", appleScript(for: script)], timeout: 900)
+        let run = await Shell.run("/usr/bin/osascript", ["-e", appleScript(for: script, itemCount: included.count)], timeout: 900)
         guard run.status == 0 else { return run.output.contains("-128") ? .cancelled : .failed }
         let ran = parse(run.output, count: included.count)
         var results = [Bool](repeating: false, count: operations.count)

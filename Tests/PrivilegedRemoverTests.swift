@@ -152,8 +152,13 @@ struct PrivilegedRemoverTests {
     }
 
     @Test func appleScriptEscapesQuotesBackslashesAndNewlines() {
-        #expect(PrivilegedRemover.appleScript(for: "echo \"a\\b\"\nnext")
-            == #"do shell script "echo \"a\\b\"\nnext" with administrator privileges without altering line endings"#)
+        #expect(PrivilegedRemover.appleScript(for: "echo \"a\\b\"\nnext", itemCount: 2)
+            == #"do shell script "echo \"a\\b\"\nnext" with prompt "Strata wants to remove 2 items that need administrator access." with administrator privileges without altering line endings"#)
+    }
+
+    @Test func passwordPromptNamesStrataAndCountsItems() {
+        #expect(PrivilegedRemover.appleScript(for: "true", itemCount: 1)
+            .contains(#"with prompt "Strata wants to remove 1 item that needs administrator access.""#))
     }
 
     @Test func parsesPerItemResults() {
