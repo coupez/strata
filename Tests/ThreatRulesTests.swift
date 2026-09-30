@@ -96,17 +96,22 @@ struct ThreatRulesTests {
         let script = temp.file("run.sh").path
         let agent = temp.file(".hidden/agent").path
         #expect(Heuristics.removablePaths(of: makeItem("com.x", program: "/bin/bash", arguments: [script]), signature: apple) == ["/L/com.x.plist", real(temp.path) + "/run.sh"])
-        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: "/Applications/X.app/Contents/MacOS/x"), signature: unsigned) == ["/L/com.x.plist"])
+        // The test host is a real app bundle in an ordinary folder: its program is never removed.
+        let host = Bundle.main.executablePath!
+        #expect(host.contains(".app/") && !Heuristics.isRiskyLocation(host))
+        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: host), signature: unsigned) == ["/L/com.x.plist"])
         #expect(Heuristics.removablePaths(of: makeItem("com.x", program: agent), signature: unsigned) == ["/L/com.x.plist", real(temp.path) + "/.hidden/agent"])
     }
 
     @Test func removablePathsNeverIncludeARealInterpreter() {
-        let python = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+        // A signed python3 is a genuine interpreter even in a risky folder: its script goes, it stays.
         let temp = TempDir()
+        let python = temp.file("python3").path
         let script = temp.file("x.py").path
         let bash = temp.file("bash").path
-        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: python, arguments: [script]), signature: trusted)
-            == ["/L/com.x.plist", real(temp.path) + "/x.py"])
+        let paths = Heuristics.removablePaths(of: makeItem("com.x", program: python, arguments: [script]), signature: trusted)
+        #expect(paths == ["/L/com.x.plist", real(temp.path) + "/x.py"])
+        #expect(!paths.contains(real(temp.path) + "/python3"))
         #expect(Heuristics.removablePaths(of: makeItem("com.x", program: bash, arguments: [script]), signature: unsigned)
             == ["/L/com.x.plist", real(temp.path) + "/bash"])
     }
