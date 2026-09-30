@@ -45,6 +45,12 @@ struct AppsModelTests {
         #expect(job.operations.map(\.label) == ["D.app"])
     }
 
+    @Test func summaryOnlyClaimsNoThreatsWhenTheRulesRan() {
+        #expect(AppsModel.readySummary(threats: 0, removable: 3, rulesLoaded: true) == "No threats found. 3 things you could remove.")
+        #expect(AppsModel.readySummary(threats: 0, removable: 1, rulesLoaded: false) == "Threat check unavailable. 1 thing you could remove.")
+        #expect(AppsModel.readySummary(threats: 2, removable: 5, rulesLoaded: false) == "2 possible threats found. Review them first.")
+    }
+
     @Test func selectionKeepsUserChoices() {
         let a = finding("a", verdict: .malicious, group: .threat)
         let b = finding("b")

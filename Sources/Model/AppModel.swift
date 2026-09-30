@@ -71,8 +71,10 @@ final class AppModel {
             let count = apps.threatCount
             if count > 0 {
                 mascot.say("Yikes! \(count) suspicious thing\(count == 1 ? "" : "s") moved in. Check the Threats list first.", mood: .excited, duration: 7)
-            } else {
+            } else if apps.rulesLoaded {
                 mascot.say("No nasties found! \(apps.removableBytes.bytes) of old apps and leftovers you could let me eat.", mood: .happy, duration: 6)
+            } else {
+                mascot.say("Couldn't run the malware check, but here's what you could remove: \(apps.removableBytes.bytes).", mood: .neutral, duration: 6)
             }
         }
         deletion.onCountdownStarted = { [weak self] job in

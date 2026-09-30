@@ -36,6 +36,10 @@ struct AppsView: View {
                     }
                 }
 
+                if let grants = apps.privacyGrants, !grants.isEmpty {
+                    PrivacySection(grants: grants)
+                }
+
                 if apps.phase == .ready, apps.findings.isEmpty {
                     Label("Nothing to remove. Your apps look tidy.", systemImage: "checkmark.seal")
                         .font(.system(size: 12))
@@ -82,6 +86,11 @@ struct AppsHeader: View {
                 Text(apps.summary)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                if let note = apps.rulesNote {
+                    Text(note)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                }
                 if apps.phase == .scanning {
                     ProgressView(value: apps.fraction)
                         .progressViewStyle(.linear)
@@ -233,5 +242,58 @@ struct FindingRow: View {
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.18)))
             .foregroundStyle(color)
+    }
+}
+
+struct PrivacySection: View {
+    let grants: [PrivacyGrant]
+
+    var body: some View {
+        let clients = Dictionary(grouping: grants, by: \.client).sorted { $0.key < $1.key }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Label("Can watch you", systemImage: "eye.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("Apps allowed to see your screen, keystrokes, camera or microphone.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                Spacer()
+                Menu("Open Settings") {
+                    ForEach(PrivacyGrant.Service.allCases) { service in
+                        Button(service.title, systemImage: service.symbol) { PrivacyAccess.openSettings(for: service) }
+                    }
+                }
+                .fixedSize()
+            }
+            .padding(.leading, 6)
+
+            VStack(spacing: 2) {
+                ForEach(clients, id: \.key) { entry in
+                    let location = entry.value.first.flatMap { PrivacyAccess.location(of: $0, resolve: PrivacyAccess.resolveApp) }
+                    HStack(spacing: 10) {
+                        Image(nsImage: IconCache.icon(for: location ?? "/")).resizable().frame(width: 20, height: 20)
+                        Text(location.map { FileManager.default.displayName(atPath: $0) } ?? entry.key)
+                            .font(.system(size: 12.5))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if location == nil {
+                            Text("No longer installed").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        ForEach(entry.value.map(\.service).sorted { $0.rawValue < $1.rawValue }) { service in
+                            Image(systemName: service.symbol)
+                                .foregroundStyle(service.canWatch ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                                .help(service.title)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 5)
+                }
+            }
+            .padding(.vertical, 10)
+            .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        }
     }
 }

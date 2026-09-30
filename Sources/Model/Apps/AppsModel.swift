@@ -21,6 +21,12 @@ enum AppScan {
 final class AppsModel {
     enum Phase: Equatable { case idle, scanning, ready }
 
+    enum RulesState: Equatable {
+        case unknown
+        case loaded(version: Int, updated: Date?)
+        case unavailable(String)
+    }
+
     static let unusedChoices = [30, 90, 180, 365]
     private static let unusedKey = "AppsUnusedDays"
 
@@ -31,6 +37,10 @@ final class AppsModel {
     private(set) var findings: [Finding] = []
     private(set) var selected: Set<String> = []
     private(set) var expanded: Set<String> = []
+    private(set) var rules: RulesState = .unknown
+    private(set) var skippedFiles = 0
+    /// nil without Full Disk Access.
+    private(set) var privacyGrants: [PrivacyGrant]?
     var unusedDays: Int = {
         let stored = UserDefaults.standard.object(forKey: AppsModel.unusedKey) as? Int
         return stored.flatMap { AppsModel.unusedChoices.contains($0) ? $0 : nil } ?? 90
@@ -49,6 +59,9 @@ final class AppsModel {
     /// Checkboxes the user touched; everything else follows `Finding.preselected`.
     @ObservationIgnored private var choices: [String: Bool] = [:]
     @ObservationIgnored private var scanID = 0
+    /// Classification runs can overlap (a threshold change, a removal, hits arriving mid-scan); only the latest may land.
+    @ObservationIgnored private var classifyID = 0
+    @ObservationIgnored private var cancelFlag: CancelFlag?
 
     func findings(in group: FindingGroup) -> [Finding] { findings.filter { $0.group == group } }
     var threatCount: Int { findings.filter { $0.group == .threat }.count }
@@ -61,10 +74,34 @@ final class AppsModel {
         switch phase {
         case .idle: "Finds unused apps, bloatware, leftovers and threats."
         case .scanning: status
-        case .ready:
-            threatCount > 0
-                ? "\(threatCount) possible threat\(threatCount == 1 ? "" : "s") found. Review them first."
-                : "No threats found. \(removable.count) thing\(removable.count == 1 ? "" : "s") you could remove."
+        case .ready: Self.readySummary(threats: threatCount, removable: removable.count, rulesLoaded: rulesLoaded)
+        }
+    }
+
+    /// Whether XProtect's rules compiled, so a clean result means something.
+    var rulesLoaded: Bool {
+        if case .loaded = rules { true } else { false }
+    }
+
+    nonisolated static func readySummary(threats: Int, removable: Int, rulesLoaded: Bool) -> String {
+        let things = "\(removable) thing\(removable == 1 ? "" : "s") you could remove."
+        if threats > 0 { return "\(threats) possible threat\(threats == 1 ? "" : "s") found. Review them first." }
+        // Without the malware rules an empty Threats list proves nothing.
+        return rulesLoaded ? "No threats found. \(things)" : "Threat check unavailable. \(things)"
+    }
+
+    var rulesNote: String? {
+        switch rules {
+        case .unknown:
+            return nil
+        case .loaded(let version, let updated):
+            var note = "Uses Apple's XProtect rules v\(version)"
+            if let updated { note += ", updated \(updated.formatted(.dateTime.day().month()))" }
+            note += ". No scanner catches everything."
+            if skippedFiles > 0 { note += " \(skippedFiles) file\(skippedFiles == 1 ? "" : "s") couldn't be scanned." }
+            return note
+        case .unavailable(let reason):
+            return "XProtect rules unavailable: \(reason)"
         }
     }
 
@@ -80,31 +117,93 @@ final class AppsModel {
     func scan() {
         scanID += 1
         let id = scanID
+        cancelFlag?.cancel()
+        let flag = CancelFlag()
+        cancelFlag = flag
         let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
         let ownID = Bundle.main.bundleIdentifier ?? "com.lucascoupez.strata"
         choices = [:]
         hits = []
         fraction = nil
+        skippedFiles = 0
+        rules = .unknown
         status = "Reading your apps…"
         withAnimation(.smooth) { phase = .scanning }
         Task {
-            let input = await Task.detached(priority: .utility) { AppScan.gather(running: running, ownID: ownID) }.value
+            let (input, xprotect, grants) = await Task.detached(priority: .utility) {
+                (AppScan.gather(running: running, ownID: ownID), XProtectRules.locate(), PrivacyAccess.load(from: PrivacyAccess.databases()))
+            }.value
             guard id == scanID else { return }
             self.input = input
-            status = "Sorting things out…"
+            privacyGrants = grants
+            status = "Checking signatures…"
+            hits = await Task.detached(priority: .utility) {
+                StaticThreats.hits(input, blockedExtensions: xprotect?.blockedExtensions ?? [:])
+                    + PrivacyAccess.hits(grants ?? [], resolve: PrivacyAccess.resolveApp, signature: CodeSignature.check)
+            }.value
+            guard id == scanID else { return }
             await classify()
+            await scanWithXProtect(xprotect, input: input, id: id, flag: flag)
             guard id == scanID else { return }
             status = ""
+            fraction = nil
             withAnimation(.smooth) { phase = .ready }
             onScanFinished?()
         }
     }
 
+    private func scanWithXProtect(_ xprotect: XProtectInfo?, input: AppScanInput, id: Int, flag: CancelFlag) async {
+        guard id == scanID else { return }
+        guard let xprotect else {
+            rules = .unavailable("XProtect isn't installed or readable")
+            return
+        }
+        status = "Loading XProtect rules…"
+        let loaded = await Task.detached(priority: .utility) { Result { try YaraEngine(ruleFiles: xprotect.ruleFiles) } }.value
+        guard id == scanID else { return }
+        let engine: YaraEngine
+        switch loaded {
+        case .success(let value):
+            engine = value
+            rules = .loaded(version: xprotect.version, updated: xprotect.updated)
+        case .failure(let error):
+            if let yaraError = error as? YaraError, case .compile(let messages) = yaraError {
+                rules = .unavailable("they didn't compile (\(messages.first ?? "unknown error"))")
+            } else {
+                rules = .unavailable("the rule engine didn't start")
+            }
+            return
+        }
+
+        let targets = await Task.detached(priority: .utility) {
+            ThreatScanner.targets(apps: input.apps, launchItems: input.launchItems, looseFolders: ThreatScanner.looseFolders())
+        }.value
+        let counter = ScanCounter()
+        let poller = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard let self, id == self.scanID else { return }
+                let done = counter.snapshot().done
+                self.status = "Scanning \(done.formatted()) of \(targets.count.formatted()) files with XProtect…"
+                self.fraction = targets.isEmpty ? nil : Double(done) / Double(targets.count)
+            }
+        }
+        await Task.detached(priority: .utility) {
+            ThreatScanner.scan(targets, engine: engine, counter: counter, isCancelled: { flag.isCancelled })
+        }.value
+        poller.cancel()
+        guard id == scanID else { return }
+        skippedFiles = counter.snapshot().skipped
+        hits += ThreatScanner.hits(for: counter.results, apps: input.apps, launchItems: input.launchItems)
+        await classify()
+    }
+
     private func classify() async {
         guard let input else { return }
-        let days = unusedDays, hits = hits, id = scanID
+        classifyID += 1
+        let days = unusedDays, hits = hits, id = scanID, call = classifyID
         let result = await Task.detached(priority: .utility) { Classifier.findings(input, unusedAfter: days, hits: hits) }.value
-        guard id == scanID else { return }
+        guard id == scanID, call == classifyID else { return }
         withAnimation(.smooth) {
             findings = result
             selected = Self.selection(for: result, choices: choices)
