@@ -1,0 +1,33 @@
+import Foundation
+import Testing
+@testable import Strata
+
+struct XProtectRulesTests {
+    let dir = TempDir()
+
+    func bundle(_ name: String, version: String, withRules: Bool = true, withScripts: Bool = false) -> URL {
+        dir.plist(name + "/Contents/Info.plist", ["CFBundleShortVersionString": version])
+        if withRules { dir.file(name + "/Contents/Resources/XProtect.yara", "rule a { condition: false }") }
+        if withScripts { dir.file(name + "/Contents/Resources/XPScripts.yr", "rule b { condition: false }") }
+        dir.plist(name + "/Contents/Resources/XProtect.meta.plist", [
+            "ExtensionBlacklist": ["Extensions": [["CFBundleIdentifier": "com.bad.ext", "Developer Identifier": "X"]]],
+        ])
+        return dir.url.appendingPathComponent(name)
+    }
+
+    @Test func picksTheNewestReadableBundle() throws {
+        let old = bundle("Old.bundle", version: "5362")
+        let new = bundle("New.bundle", version: "5363", withScripts: true)
+        let broken = bundle("Broken.bundle", version: "9999", withRules: false)
+        let info = try #require(XProtectRules.locate([old, broken, new]))
+        #expect(info.version == 5363)
+        #expect(info.bundle == new)
+        #expect(info.ruleFiles.map(\.lastPathComponent) == ["XProtect.yara", "XPScripts.yr"])
+        #expect(info.blockedExtensionIDs == ["com.bad.ext"])
+        #expect(info.updated != nil)
+    }
+
+    @Test func nothingReadableMeansNil() {
+        #expect(XProtectRules.locate([dir.url.appendingPathComponent("none")]) == nil)
+    }
+}
