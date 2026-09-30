@@ -240,7 +240,7 @@ final class AppsModel {
 
     func didRemove(_ job: DeletionJob, result: DeletionResult) {
         // A partial or failed removal may still have deleted things, so trust the disk, not the outcome.
-        let removed = job.operations.compactMap(\.url).filter { !DirectorySizer.exists($0.path) }
+        let removed = job.operations.compactMap(\.url).filter { PathProbe.isGone($0.path) }
         onItemsRemoved?(removed)
         let gone = Set(removed.map(\.path))
         // Keep the cached scan in step so re-classifying doesn't bring removed things back.

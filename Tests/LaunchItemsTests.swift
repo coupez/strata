@@ -33,6 +33,33 @@ struct LaunchItemsTests {
         #expect(try #require(load().first).isOrphaned)
     }
 
+    @Test func unreachableProgramIsNotOrphaned() throws {
+        let program = dir.file("locked/agent", "#!/bin/sh\n")
+        let locked = program.deletingLastPathComponent().path
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked) }
+        dir.plist("c.plist", ["Label": "com.example.c", "Program": program.path])
+        #expect(try !#require(load().first).isOrphaned)
+    }
+
+    @Test func programOnAnUnmountedDriveIsNotOrphaned() throws {
+        dir.plist("c.plist", ["Label": "com.example.c", "Program": "/Volumes/NoSuchDrive/x"])
+        #expect(try !#require(load().first).isOrphaned)
+    }
+
+    @Test func pathProbeOnlyCallsMissingPathsGone() throws {
+        let file = dir.file("present")
+        #expect(!PathProbe.isGone(file.path))
+        #expect(PathProbe.isGone(dir.path + "/missing"))
+        #expect(PathProbe.isGone(file.path + "/under-a-file"))
+        let hidden = dir.file("locked/inner")
+        let locked = hidden.deletingLastPathComponent().path
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked) }
+        #expect(!PathProbe.isGone(hidden.path))
+        #expect(!PathProbe.isGone(locked + "/never-there"))
+    }
+
     @Test func relativeProgramIsResolvedAndNotOrphaned() throws {
         dir.plist("d.plist", ["Label": "com.example.d", "ProgramArguments": ["sh", "-c", "echo hi"]])
         let item = try #require(load().first)

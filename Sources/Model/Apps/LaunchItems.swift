@@ -62,7 +62,7 @@ enum LaunchItems {
                 if let bundle = resolveBundle(associated) {
                     let path = bundle.appendingPathComponent(bundleProgram).path
                     program = path
-                    orphaned = !DirectorySizer.exists(path)
+                    orphaned = isMissing(path)
                 } else {
                     orphaned = true
                 }
@@ -70,7 +70,7 @@ enum LaunchItems {
         } else if let path = (plist["Program"] as? String) ?? programArguments.first {
             if path.hasPrefix("/") {
                 program = path
-                orphaned = !DirectorySizer.exists(path)
+                orphaned = isMissing(path)
             } else {
                 // launchd searches PATH for bare names like "sh"; not finding one isn't proof it's gone.
                 program = Shell.locate(path)
@@ -85,5 +85,11 @@ enum LaunchItems {
         return LaunchItem(plist: url, label: label, domain: domain, program: program,
                           arguments: Array(programArguments.dropFirst()), associatedBundleID: associated,
                           runsAtLoad: (plist["RunAtLoad"] as? Bool ?? false) || keepAlive, isOrphaned: orphaned)
+    }
+
+    /// Orphans are pre-selected, so only a program that is provably gone counts: not one we can't
+    /// reach, and not one on a drive that simply isn't plugged in.
+    static func isMissing(_ program: String) -> Bool {
+        !program.lowercased().hasPrefix("/volumes/") && PathProbe.isGone(program)
     }
 }
