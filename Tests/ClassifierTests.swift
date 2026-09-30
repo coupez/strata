@@ -236,4 +236,31 @@ struct ClassifierTests {
         #expect(finding?.title == "com.Gone.App")
         #expect(finding?.id == "leftover:com.gone.app")
     }
+
+    // MARK: Fix round 2
+
+    @Test func mergingKeepsTheStrongestEarlierVerdict() throws {
+        let item = makeItem("com.x.agent", program: "/Users/Shared/.x/agent")
+        let hits = [ThreatHit(paths: ["/Users/Shared/.x/agent"], verdict: .malicious, reason: "Matches XProtect", title: "agent"),
+                    ThreatHit(paths: [item.plist.path, "/Users/Shared/.x/agent"], verdict: .suspicious, reason: "Hidden", title: "com.x")]
+        let found = classify(input(items: [item]), hits: hits)
+        let finding = try #require(found.first)
+        #expect(found.count == 1)
+        #expect(finding.group == .threat)
+        #expect(finding.verdict == .malicious)
+        #expect(finding.reasons.contains("Matches XProtect"))
+        #expect(finding.reasons.contains("Hidden"))
+        #expect(finding.preselected)
+        #expect(Set(finding.parts.map(\.url.path)) == ["/Users/Shared/.x/agent", item.plist.path])
+    }
+
+    @Test func hitPathThatIsAParentAbsorbsExistingParts() {
+        let first = ThreatHit(paths: ["/Users/Shared/.x/agent"], verdict: .adware, reason: "a", title: "agent")
+        let parent = ThreatHit(paths: ["/Users/Shared/.x"], verdict: .suspicious, reason: "b", title: "x")
+        let found = classify(input(), hits: [first, parent])
+        #expect(found.count == 1)
+        #expect(found.first?.parts.map(\.url.path) == ["/Users/Shared/.x"])
+        #expect(found.first?.verdict == .adware)
+        #expect(found.first?.risk == .caution)
+    }
 }

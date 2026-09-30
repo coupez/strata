@@ -128,7 +128,8 @@ enum Classifier {
     }
 
     /// Folds threat hits into one finding per hit: the one that owns the primary path, or a new one.
-    /// The hit's other paths move out of whatever lower-priority finding held them.
+    /// The hit's paths move out of whatever lower-priority finding held them, and a path that
+    /// covers existing parts absorbs them. A finding that loses a part passes its verdict on.
     static func merge(_ hits: [ThreatHit], into findings: inout [Finding], size: (URL) -> Int64) {
         for hit in hits where !hit.paths.isEmpty {
             let target: Int
@@ -143,19 +144,34 @@ enum Classifier {
                                         parts: [], risk: .review))
                 target = findings.count - 1
             }
-            findings[target].risk = findings[target].verdict == .adware ? .caution : .review
+
+            func fold(from source: Int) {
+                guard let verdict = findings[source].verdict else { return }
+                findings[target].verdict = max(findings[target].verdict ?? verdict, verdict)
+                for reason in findings[source].reasons where !findings[target].reasons.contains(reason) {
+                    findings[target].reasons.append(reason)
+                }
+            }
 
             for path in hit.paths where !findings[target].contains(path) {
+                // Parts inside `path` are covered by it.
+                for index in findings.indices {
+                    guard findings[index].parts.contains(where: { $0.url.path.hasPrefix(path + "/") }) else { continue }
+                    findings[index].parts.removeAll { $0.url.path.hasPrefix(path + "/") }
+                    if index != target { fold(from: index) }
+                }
                 var moved: FindingPart?
                 for index in findings.indices where index != target {
                     guard let part = findings[index].parts.first(where: { path == $0.url.path || path.hasPrefix($0.url.path + "/") }) else { continue }
                     findings[index].parts.removeAll { $0.url == part.url }
+                    fold(from: index)
                     moved = part
                     break
                 }
                 let url = URL(fileURLWithPath: path)
                 findings[target].parts.append(moved ?? FindingPart(url: url, size: size(url), kind: .file))
             }
+            findings[target].risk = findings[target].verdict == .adware ? .caution : .review
             findings.removeAll { $0.parts.isEmpty }
         }
     }
