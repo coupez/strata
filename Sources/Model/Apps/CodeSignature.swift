@@ -7,7 +7,7 @@ struct Signature: Hashable, Sendable {
     let kind: Kind
     let teamID: String?
 
-    /// Signed by Apple, or by a developer Apple identified (Developer ID or App Store).
+    /// Signed by Apple, or by a developer Apple identified (Developer ID or Mac App Store).
     var isTrusted: Bool { kind == .apple || kind == .identified }
 
     var summary: String {
@@ -25,7 +25,11 @@ struct Signature: Hashable, Sendable {
 /// Offline code-signature checks. Resources aren't hashed, so even huge apps take milliseconds.
 enum CodeSignature {
     private static let apple = requirement("anchor apple")
-    private static let identified = requirement("anchor apple generic")
+    // Developer ID or Mac App Store only: plain `anchor apple generic` would also accept free Apple Development certificates.
+    private static let identified = requirement(
+        "anchor apple generic and (certificate leaf[field.1.2.840.113635.100.6.1.9] exists or "
+            + "(certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists))"
+    )
     private static let cache = SignatureCache()
 
     static func check(_ path: String) -> Signature {

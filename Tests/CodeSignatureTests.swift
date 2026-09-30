@@ -11,6 +11,14 @@ struct CodeSignatureTests {
         #expect(signature.isTrusted)
     }
 
+    @Test(.enabled(if: FileManager.default.fileExists(atPath: "/Applications/Keynote.app")))
+    func developerIDOrAppStoreAppIsIdentified() {
+        let signature = CodeSignature.check("/Applications/Keynote.app")
+        #expect(signature.kind == .identified)
+        #expect(signature.teamID == "74J34U3R6X")
+        #expect(signature.isTrusted)
+    }
+
     @Test func unsignedAndAdhocCopies() throws {
         let unsigned = dir.url.appendingPathComponent("ls-unsigned")
         try FileManager.default.copyItem(atPath: "/bin/ls", toPath: unsigned.path)
