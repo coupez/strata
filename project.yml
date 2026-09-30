@@ -15,6 +15,8 @@ targets:
     sources:
       - Sources
       - Resources
+    dependencies:
+      - target: yara
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lucascoupez.strata
@@ -31,6 +33,21 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_STRICT_CONCURRENCY: minimal
         COMBINE_HIDPI_IMAGES: YES
+        SWIFT_INCLUDE_PATHS: ["$(SRCROOT)/Vendor/yara"]
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/yara/libyara/include"]
+  yara:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: Vendor/yara/libyara
+        excludes:
+          - "include/**"
+    settings:
+      base:
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/yara/libyara", "$(SRCROOT)/Vendor/yara/libyara/include"]
+        GCC_PREPROCESSOR_DEFINITIONS: ["USE_NO_PROC", "HAVE_SCAN_PROC_IMPL=0", "HASH_MODULE", "HAVE_COMMONCRYPTO_COMMONCRYPTO_H", "BUCKETS_128=1", "CHECKSUM_1B=1"]
+        GCC_WARN_INHIBIT_ALL_WARNINGS: YES
+        CLANG_ENABLE_MODULES: NO
   StrataTests:
     type: bundle.unit-test
     platform: macOS
@@ -47,6 +64,8 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Strata.app/Contents/MacOS/Strata"
         BUNDLE_LOADER: "$(TEST_HOST)"
         SWIFT_STRICT_CONCURRENCY: minimal
+        SWIFT_INCLUDE_PATHS: ["$(SRCROOT)/Vendor/yara"]
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/yara/libyara/include"]
 schemes:
   Strata:
     build:

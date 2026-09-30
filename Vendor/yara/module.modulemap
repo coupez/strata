@@ -1,0 +1,5 @@
+module yara [system] {
+    header "libyara/include/yara.h"
+    link "yara"
+    export *
+}
