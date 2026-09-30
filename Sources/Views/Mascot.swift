@@ -55,10 +55,13 @@ final class MascotController {
     }
 
     func tabChanged(to tab: AppModel.Tab, model: AppModel) {
-        if tab == .cleanup {
+        switch tab {
+        case .cleanup:
             say("Snack menu! Caches grow back on their own. Read the Caution and Review tags before picking those.", mood: .curious, duration: 6)
-        } else if model.phase == .ready {
-            say("Back to the rings! Click one to dive in.", mood: .happy, duration: 3)
+        case .apps:
+            say("Let's see which apps are gathering dust… and whether anything sneaky moved in.", mood: .curious, duration: 5)
+        case .explore:
+            if model.phase == .ready { say("Back to the rings! Click one to dive in.", mood: .happy, duration: 3) }
         }
     }
 

@@ -4,7 +4,17 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppModel {
-    enum Tab: Hashable { case explore, cleanup }
+    enum Tab: Hashable {
+        case explore, cleanup, apps
+
+        var title: String {
+            switch self {
+            case .explore: "Explore"
+            case .cleanup: "Cleanup"
+            case .apps: "Apps & Threats"
+            }
+        }
+    }
     enum Phase: Equatable { case idle, scanning, ready }
     enum DeleteMode: String, CaseIterable, Identifiable {
         case trash, permanent
@@ -15,7 +25,11 @@ final class AppModel {
     enum SelectionState { case none, direct, inherited }
 
     var tab: Tab = .explore {
-        didSet { if tab != oldValue { mascot.tabChanged(to: tab, model: self) } }
+        didSet {
+            guard tab != oldValue else { return }
+            mascot.tabChanged(to: tab, model: self)
+            if tab == .apps, apps.phase == .idle { apps.scan() }
+        }
     }
     private(set) var phase: Phase = .idle
     private(set) var target: ScanTarget?
@@ -41,6 +55,7 @@ final class AppModel {
 
     let deletion = DeletionController()
     let cleanup = CleanupModel()
+    let apps = AppsModel()
     let mascot = MascotController()
 
     /// Where the sunburst sits in window coordinates, so the mascot knows where food comes from.
@@ -50,6 +65,16 @@ final class AppModel {
 
     init() {
         cleanup.onItemsRemoved = { [weak self] urls in self?.removeFromTree(urls) }
+        apps.onItemsRemoved = { [weak self] urls in self?.removeFromTree(urls) }
+        apps.onScanFinished = { [weak self] in
+            guard let self, tab == .apps else { return }
+            let count = apps.threatCount
+            if count > 0 {
+                mascot.say("Yikes! \(count) suspicious thing\(count == 1 ? "" : "s") moved in. Check the Threats list first.", mood: .excited, duration: 7)
+            } else {
+                mascot.say("No nasties found! \(apps.removableBytes.bytes) of old apps and leftovers you could let me eat.", mood: .happy, duration: 6)
+            }
+        }
         deletion.onCountdownStarted = { [weak self] job in
             self?.mascot.say("Deleting \(job.totalBytes.bytes) in 5 seconds… press Esc if you change your mind!", mood: .excited, duration: 5)
         }
@@ -119,10 +144,10 @@ final class AppModel {
     }
 
     func rescan() {
-        if tab == .cleanup {
-            Task { await cleanup.measureAll() }
-        } else if let target {
-            startScan(target)
+        switch tab {
+        case .cleanup: Task { await cleanup.measureAll() }
+        case .apps: apps.scan()
+        case .explore: if let target { startScan(target) }
         }
     }
 
@@ -269,6 +294,13 @@ final class AppModel {
         deletion.schedule(job) { [weak self] result in
             self?.cleanup.didClean(recommendations, job: job, result: result)
         }
+    }
+
+    func requestAppRemoval() {
+        guard !deletion.isBusy else { return }
+        let job = apps.removalJob(trash: deleteMode == .trash)
+        guard !job.operations.isEmpty else { return }
+        deletion.schedule(job) { [weak self] result in self?.apps.didRemove(job, result: result) }
     }
 
     private func applyDeletion(nodes: [FileNode], result: DeletionResult) {

@@ -46,19 +46,21 @@ struct ContentView: View {
                 switch model.tab {
                 case .explore: ExploreView()
                 case .cleanup: CleanupView()
+                case .apps: AppsView()
                 }
             }
             .overlay(alignment: .top) { ResultToast() }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-            .navigationTitle(model.tab == .explore ? "Explore" : "Cleanup")
+            .navigationTitle(model.tab.title)
             .navigationSubtitle(subtitle)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { model.rescan() } label: {
                         Label("Rescan", systemImage: "arrow.clockwise")
                     }
-                    .help(model.tab == .explore ? "Scan again" : "Re-check recommendations")
-                    .disabled(model.tab == .explore && (model.target == nil || model.phase == .scanning))
+                    .help(model.tab == .explore ? "Scan again" : model.tab == .apps ? "Scan apps again" : "Re-check recommendations")
+                    .disabled((model.tab == .explore && (model.target == nil || model.phase == .scanning))
+                              || (model.tab == .apps && model.apps.phase == .scanning))
                 }
             }
         }
@@ -80,6 +82,8 @@ struct ContentView: View {
             return "\(root.displayName) · \(root.size.bytes)"
         case .cleanup:
             return "\(model.cleanup.totalReclaimable.bytes) reclaimable"
+        case .apps:
+            return model.apps.phase == .ready ? "\(model.apps.removableBytes.bytes) removable" : ""
         }
     }
 }
@@ -108,6 +112,25 @@ struct SidebarView: View {
                     Image(systemName: "sparkles")
                 }
                 .tag(AppModel.Tab.cleanup)
+            }
+
+            Section("Health") {
+                Label {
+                    HStack {
+                        Text("Apps & Threats")
+                        Spacer()
+                        if model.apps.threatCount > 0 {
+                            Text("\(model.apps.threatCount)")
+                                .font(.system(size: 11, weight: .bold))
+                                .padding(.horizontal, 6)
+                                .background(Capsule().fill(.red.opacity(0.2)))
+                                .foregroundStyle(.red)
+                        }
+                    }
+                } icon: {
+                    Image(systemName: "shield.lefthalf.filled")
+                }
+                .tag(AppModel.Tab.apps)
             }
 
             Section("Scan") {

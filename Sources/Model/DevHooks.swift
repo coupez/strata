@@ -3,11 +3,24 @@ import AppKit
 /// Development-only automation, driven by environment variables:
 /// - STRATA_SNAPSHOT_DIR: write PNG snapshots of the window there.
 /// - STRATA_DEMO=1: after a scan, zoom into the largest folder, select items and start a deletion.
+/// - STRATA_TAB=apps: open Apps & Threats; with STRATA_SNAPSHOT_DIR, snapshot it once scanned.
 /// Point STRATA_AUTOSCAN at a throwaway folder when using STRATA_DEMO.
 @MainActor
 enum DevHooks {
     static func run(model: AppModel) {
         let env = ProcessInfo.processInfo.environment
+        if env["STRATA_TAB"] == "apps" {
+            model.tab = .apps
+            guard let directory = env["STRATA_SNAPSHOT_DIR"] else { return }
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                snapshot(directory, "apps-01-scanning")
+                while model.apps.phase != .ready { try? await Task.sleep(for: .milliseconds(200)) }
+                try? await Task.sleep(for: .seconds(1.5))
+                snapshot(directory, "apps-02-ready")
+            }
+            return
+        }
         guard let directory = env["STRATA_SNAPSHOT_DIR"] else { return }
         let demo = env["STRATA_DEMO"] == "1"
         Task {
