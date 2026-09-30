@@ -8,4 +8,5 @@ only=()
 [[ $# -gt 0 ]] && only=(-only-testing:StrataTests/$1)
 xcodebuild -project Strata.xcodeproj -scheme Strata -derivedDataPath build/DerivedData \
   -destination 'platform=macOS,arch=arm64' test "${only[@]}" 2>&1 \
-  | grep -E "✔|✘|error:|Expectation failed|TEST (SUCCEEDED|FAILED)|Test run"
+  | grep -E "✔|✘|error:|Expectation failed|TEST (SUCCEEDED|FAILED)|Test run" \
+  | grep -v linkd

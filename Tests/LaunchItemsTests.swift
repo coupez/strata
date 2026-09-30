@@ -53,6 +53,13 @@ struct LaunchItemsTests {
         #expect(try #require(load().first).isOrphaned)
     }
 
+    @Test func bundleProgramWithoutAssociatedAppIsNotOrphaned() throws {
+        dir.plist("g.plist", ["Label": "com.example.g", "BundleProgram": "Contents/MacOS/main"])
+        let item = try #require(load().first)
+        #expect(item.program == nil)
+        #expect(!item.isOrphaned)
+    }
+
     @Test func keepAliveDictionaryCountsAsRunAtLoad() throws {
         dir.plist("f.plist", ["Label": "com.example.f", "Program": "/bin/ls", "KeepAlive": ["SuccessfulExit": false]])
         #expect(try #require(load().first).runsAtLoad)

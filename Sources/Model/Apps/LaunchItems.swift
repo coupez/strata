@@ -56,12 +56,16 @@ enum LaunchItems {
         var program: String?
         var orphaned = false
         if let bundleProgram = plist["BundleProgram"] as? String {
-            if let bundle = associated.flatMap(resolveBundle) {
-                let path = bundle.appendingPathComponent(bundleProgram).path
-                program = path
-                orphaned = !DirectorySizer.exists(path)
-            } else {
-                orphaned = true
+            // Without an associated app there is no way to tell where the program lives, so it
+            // isn't provably orphaned (orphans get pre-selected for removal).
+            if let associated {
+                if let bundle = resolveBundle(associated) {
+                    let path = bundle.appendingPathComponent(bundleProgram).path
+                    program = path
+                    orphaned = !DirectorySizer.exists(path)
+                } else {
+                    orphaned = true
+                }
             }
         } else if let path = (plist["Program"] as? String) ?? programArguments.first {
             if path.hasPrefix("/") {
