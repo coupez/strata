@@ -42,4 +42,20 @@ struct SupportFilesTests {
         #expect(SupportFiles.owner(of: entry("/u/Library/Caches/One"), among: [app]) == nil)
         #expect(SupportFiles.owner(of: entry("/u/Library/Caches/com.example.onething"), among: [app]) == nil)
     }
+
+    @Test func ownerPrefersTheClosestSiblingApp() {
+        func app(_ id: String, _ name: String) -> InstalledApp {
+            InstalledApp(url: URL(fileURLWithPath: "/Applications/\(name).app"), bundleID: id, name: name,
+                         version: nil, nestedBundleIDs: [], size: 1, lastUsed: nil, dateAdded: nil)
+        }
+        func entry(_ name: String) -> SupportEntry {
+            SupportEntry(url: URL(fileURLWithPath: "/u/Library/Caches/\(name)"), bundleID: SupportFiles.bundleID(fromName: name))
+        }
+        let chrome = app("com.google.Chrome", "Google Chrome"), canary = app("com.google.Chrome.canary", "Google Chrome Canary")
+        for apps in [[chrome, canary], [canary, chrome]] {
+            #expect(SupportFiles.owner(of: entry("com.google.Chrome.canary"), among: apps) == canary)
+            #expect(SupportFiles.owner(of: entry("com.google.Chrome"), among: apps) == chrome)
+            #expect(SupportFiles.owner(of: entry("com.google.Chrome.canary.helper.plist"), among: apps) == canary)
+        }
+    }
 }

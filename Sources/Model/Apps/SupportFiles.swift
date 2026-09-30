@@ -51,7 +51,13 @@ enum SupportFiles {
     /// Application Support folder named exactly like the app.
     static func owner(of entry: SupportEntry, among apps: [InstalledApp]) -> InstalledApp? {
         if let id = entry.bundleID {
-            return apps.first { app in IDs.owns(app.bundleID, id) || app.nestedBundleIDs.contains { IDs.owns($0, id) } }
+            // Closest match wins, so Chrome Canary's data is never attributed to Chrome (or vice versa).
+            var best: (app: InstalledApp, score: Int)?
+            for app in apps {
+                guard let score = ([app.bundleID] + app.nestedBundleIDs).compactMap({ IDs.matchScore(owner: $0, id: id) }).max() else { continue }
+                if score > (best?.score ?? -1) { best = (app, score) }
+            }
+            return best?.app
         }
         guard entry.url.deletingLastPathComponent().lastPathComponent == "Application Support" else { return nil }
         return apps.first { $0.name == entry.name }
@@ -63,6 +69,16 @@ enum IDs {
     static func owns(_ owner: String, _ id: String) -> Bool {
         let owner = owner.lowercased(), id = id.lowercased()
         return owner == id || id.hasPrefix(owner + ".") || owner.hasPrefix(id + ".")
+    }
+
+    /// How closely `owner` matches `id`, nil when unrelated: exact is best, then a dotted parent of `id`
+    /// (longer is closer), then an `id` that is itself a parent of `owner`. Same relation as `owns`.
+    static func matchScore(owner: String, id: String) -> Int? {
+        let owner = owner.lowercased(), id = id.lowercased()
+        if owner == id { return Int.max }
+        if id.hasPrefix(owner + ".") { return owner.count }
+        if owner.hasPrefix(id + ".") { return 0 }
+        return nil
     }
 
     /// "com.microsoft.EdgeUpdater.update" → "com.microsoft"

@@ -46,4 +46,21 @@ struct LeftoversTests {
         #expect(groups.last?.launchItems.map(\.label) == ["com.gone.app.updater"])
         #expect(groups.last?.entries.count == 1)
     }
+
+    @Test func groupsIgnoreIDCase() {
+        let groups = find([entry("/S/com.Gone.App"), entry("/P/com.gone.app.plist")], items: [item("COM.GONE.APP.updater", orphaned: true)])
+        #expect(groups.map(\.key) == ["com.gone.app"])
+        #expect(groups.first?.entries.count == 2)
+        #expect(groups.first?.launchItems.count == 1)
+    }
+
+    @Test func appleLaunchLabelsAreSkippedCaseInsensitively() {
+        #expect(find([], items: [item("com.Apple.x", orphaned: true)]).isEmpty)
+    }
+
+    @Test func orphanedLaunchItemsAreReportedEvenWhenVendorIsInstalled() {
+        // They can never run, so the installed vendor's other apps are irrelevant.
+        let groups = find([], items: [item("com.google.keystone.agent", orphaned: true)], installed: ["com.google.Chrome"])
+        #expect(groups.map(\.key) == ["com.google.keystone"])
+    }
 }
