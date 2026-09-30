@@ -37,21 +37,22 @@ enum Heuristics {
         return reasons
     }
 
-    /// The plist plus any program or script that isn't part of macOS or of an app bundle, at its real
-    /// location. An untrusted app bundle sitting in a risky folder is removed whole rather than just its executable.
+    /// The plist plus any program or script file that isn't part of macOS or of an app bundle, at its real
+    /// location. An untrusted app bundle sitting in a risky folder is removed whole rather than just its
+    /// executable; that is the only way a folder is ever listed.
     static func removablePaths(of item: LaunchItem, signature: (String) -> Signature) -> [String] {
         var paths = [item.plist.path]
         guard let raw = item.program else { return paths }
         let location = resolved(raw)
         let program = location ?? standardized(raw)
         if isGenuineInterpreter(program, signature: signature) {
-            if let script = riskyScript(in: item) { paths.append(script) }
+            if let script = riskyScript(in: item), isFileOrLink(script) { paths.append(script) }
         } else if hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) {
             // Belongs to macOS or a package manager.
         } else if let location {
             if let bundle = appBundle(containing: location) {
                 if isRisky(bundle), !signature(location).isTrusted { paths.append(bundle) }
-            } else {
+            } else if isFileOrLink(location) {
                 paths.append(location)
             }
         }
@@ -73,6 +74,14 @@ enum Heuristics {
         let name = (path as NSString).lastPathComponent
         guard name != "/", let parent = PrivilegedRemover.realpathOf((path as NSString).deletingLastPathComponent) else { return nil }
         return (parent == "/" ? "" : parent) + "/" + name
+    }
+
+    /// launchd can't run a folder, so one named as a program or script is never a deletion target.
+    private static func isFileOrLink(_ path: String) -> Bool {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return false }
+        let type = info.st_mode & S_IFMT
+        return type == S_IFREG || type == S_IFLNK
     }
 
     /// For a path already resolved.

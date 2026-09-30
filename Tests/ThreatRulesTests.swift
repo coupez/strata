@@ -58,9 +58,11 @@ struct ThreatRulesTests {
                               arguments: ["/Library/Application Support/Vendor/agent.py", "--log", "/tmp/agent.log"])
         #expect(Heuristics.reasons(for: vendor, signature: apple).isEmpty)
         #expect(Heuristics.removablePaths(of: vendor, signature: apple) == ["/L/com.x.plist"])
-        let temp = makeItem("com.x", program: "/bin/zsh", arguments: ["/tmp/run.sh", "/Users/me/.config"])
+        let dir = TempDir()
+        let script = dir.file("run.sh").path
+        let temp = makeItem("com.x", program: "/bin/zsh", arguments: [script, "/Users/me/.config"])
         #expect(Heuristics.reasons(for: temp, signature: apple) == ["Runs a zsh script from a temporary folder"])
-        #expect(Heuristics.removablePaths(of: temp, signature: apple) == ["/L/com.x.plist", "/private/tmp/run.sh"])
+        #expect(Heuristics.removablePaths(of: temp, signature: apple) == ["/L/com.x.plist", real(dir.path) + "/run.sh"])
     }
 
     @Test func aFakeInterpreterIsJudgedAsAProgram() {
@@ -89,17 +91,24 @@ struct ThreatRulesTests {
     }
 
     @Test func removablePathsSkipSystemAndAppPrograms() {
-        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: "/bin/bash", arguments: ["/tmp/run.sh"]), signature: apple) == ["/L/com.x.plist", "/private/tmp/run.sh"])
+        // Only files that exist are removable, so these live in a real temporary folder.
+        let temp = TempDir()
+        let script = temp.file("run.sh").path
+        let agent = temp.file(".hidden/agent").path
+        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: "/bin/bash", arguments: [script]), signature: apple) == ["/L/com.x.plist", real(temp.path) + "/run.sh"])
         #expect(Heuristics.removablePaths(of: makeItem("com.x", program: "/Applications/X.app/Contents/MacOS/x"), signature: unsigned) == ["/L/com.x.plist"])
-        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: hiddenAgent), signature: unsigned) == ["/L/com.x.plist", hiddenAgent])
+        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: agent), signature: unsigned) == ["/L/com.x.plist", real(temp.path) + "/.hidden/agent"])
     }
 
     @Test func removablePathsNeverIncludeARealInterpreter() {
         let python = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
-        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: python, arguments: ["/tmp/x.py"]), signature: trusted)
-            == ["/L/com.x.plist", "/private/tmp/x.py"])
-        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: "/tmp/bash", arguments: ["/tmp/x.sh"]), signature: unsigned)
-            == ["/L/com.x.plist", "/private/tmp/bash"])
+        let temp = TempDir()
+        let script = temp.file("x.py").path
+        let bash = temp.file("bash").path
+        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: python, arguments: [script]), signature: trusted)
+            == ["/L/com.x.plist", real(temp.path) + "/x.py"])
+        #expect(Heuristics.removablePaths(of: makeItem("com.x", program: bash, arguments: [script]), signature: unsigned)
+            == ["/L/com.x.plist", real(temp.path) + "/bash"])
     }
 
     @Test func removablePathsTakeTheWholeBundleWhenItSitsInARiskyFolder() {
@@ -143,6 +152,18 @@ struct ThreatRulesTests {
         #expect(Heuristics.removablePaths(of: program, signature: unsigned) == ["/L/com.x.plist", link])
     }
 
+    @Test func foldersAreNeverRemovedAsAProgramOrScript() {
+        // launchd can't run a folder: naming one must never make it a deletion target.
+        let support = makeItem("com.vsearch.agent", program: NSHomeDirectory() + "/Library/Application Support")
+        #expect(Heuristics.removablePaths(of: support, signature: unsigned) == ["/L/com.vsearch.agent.plist"])
+        let temp = TempDir()
+        temp.directory("scripts")
+        let folderScript = makeItem("com.x", program: "/bin/bash", arguments: [temp.path + "/scripts"])
+        #expect(Heuristics.removablePaths(of: folderScript, signature: apple) == ["/L/com.x.plist"])
+        let folderProgram = makeItem("com.x", program: temp.path + "/scripts")
+        #expect(Heuristics.removablePaths(of: folderProgram, signature: unsigned) == ["/L/com.x.plist"])
+    }
+
     @Test func pathsWhoseFolderIsMissingAreUnusable() {
         let missing = "/tmp/strata-missing-\(UUID().uuidString)/run.sh"
         #expect(!Heuristics.isRiskyLocation(missing))
@@ -155,8 +176,10 @@ struct ThreatRulesTests {
         let adware = makeApp("/Applications/MacKeeper.app", id: "com.mackeeper.MacKeeper")
         let blocked = makeApp("/Applications/Search.app", id: "com.example.search", nested: ["com.searchnt.safari"])
         let fine = makeApp("/Applications/Fine.app", id: "com.example.fine")
+        let temp = TempDir()
+        let agent = temp.file(".hidden/agent").path
         let input = AppScanInput(apps: [adware, blocked, fine],
-                                 launchItems: [makeItem("com.x.agent", program: hiddenAgent)],
+                                 launchItems: [makeItem("com.x.agent", program: agent)],
                                  support: [SupportEntry(url: URL(fileURLWithPath: "/S/com.zeobit.keeper"), bundleID: "com.zeobit.keeper")],
                                  running: [], ownID: "com.lucascoupez.strata", now: .now, soundLibraries: [])
         let hits = StaticThreats.hits(input, blockedExtensions: ["com.searchnt.safari": ["T"]], signature: { path in
@@ -164,7 +187,7 @@ struct ThreatRulesTests {
         })
         #expect(hits.map(\.verdict) == [.adware, .malicious, .suspicious, .adware])
         #expect(hits.map(\.primary) == ["/Applications/MacKeeper.app", "/Applications/Search.app", "/L/com.x.agent.plist", "/S/com.zeobit.keeper"])
-        #expect(hits[2].paths == ["/L/com.x.agent.plist", hiddenAgent])
+        #expect(hits[2].paths == ["/L/com.x.agent.plist", real(temp.path) + "/.hidden/agent"])
     }
 
     @Test func aBlockedExtensionIDFromAnotherDeveloperIsOnlySuspicious() {
