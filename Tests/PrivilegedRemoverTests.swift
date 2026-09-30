@@ -20,7 +20,9 @@ struct PrivilegedRemoverTests {
                       "/Applications/Foo.app/", "/Applications//Foo.app", "/APPLICATIONS/Utilities", "/applications/utilities",
                       "/Library/Preferences/SystemConfiguration/preferences.plist", "/Library/Application Support/Apple/ParentalControls",
                       "/Library/Application Support/com.apple.TCC", "/Library/Caches/com.apple.amsengagementd",
-                      "/Users/me/Library/Caches/com.x", "/Users/me/.ssh"])
+                      "/Users/me/Library/Caches/com.x", "/Users/me/.ssh",
+                      "/Library/Preferences/.GlobalPreferences.plist", "/Library/Preferences/OpenDirectory",
+                      "/Library/Preferences/OpenDirectory/Configurations"])
     func rejectsEverythingElse(path: String) {
         #expect(!PrivilegedRemover.isAllowed(path, resolve: identity))
     }
@@ -47,8 +49,8 @@ struct PrivilegedRemoverTests {
             "cd /",
             "bin=$(/usr/bin/mktemp -d '/Users/me/.Trash/Removed by Strata.XXXXXX') || bin=''",
             "if cd -P -- '/Library/LaunchDaemons' 2>/dev/null && [ \"$(pwd -P)\" = '/Library/LaunchDaemons' ]; then",
-            "/bin/launchctl bootout system './com.x.plist' 2>/dev/null",
-            "if [ -n \"$bin\" ] && /bin/mv -n -- './com.x.plist' \"$bin/\" && [ ! -e '/Library/LaunchDaemons/com.x.plist' ] && [ ! -L '/Library/LaunchDaemons/com.x.plist' ]; then echo OK 0; else echo FAIL 0; fi",
+            "/bin/launchctl bootout system '/Library/LaunchDaemons/com.x.plist' 2>/dev/null",
+            "if [ -n \"$bin\" ] && /bin/mkdir -- \"$bin/0\" && /bin/mv -n -- './com.x.plist' \"$bin/0/\" && [ ! -e './com.x.plist' ] && [ ! -L './com.x.plist' ]; then echo OK 0; else echo FAIL 0; fi",
             "else echo FAIL 0; fi",
             "cd /",
             "if cd -P -- '/Applications' 2>/dev/null && [ \"$(pwd -P)\" = '/Applications' ]; then",
@@ -57,6 +59,29 @@ struct PrivilegedRemoverTests {
             "cd /",
         ].joined(separator: "\n"))
         #expect(!script.contains("chown"))
+    }
+
+    @Test func scriptNeverTrustsASecondResolution() {
+        let script = PrivilegedRemover.script(for: [
+            ElevatedOperation(url: URL(fileURLWithPath: "/Applications/Evil/x.app"), trash: false),
+        ], trashDirectory: "/Users/me/.Trash", resolve: { $0 == "/Applications/Evil" ? "/Library/Keychains" : $0 })
+        #expect(script == "cd /\nbin=''\necho FAIL 0")
+        #expect(!script.contains("Keychains"))
+    }
+
+    @Test func vettedReturnsTheResolvedParentAndName() {
+        let vetted = PrivilegedRemover.vetted("/Applications/Link/x.app", resolve: { $0 == "/Applications/Link" ? "/Applications/Real" : $0 })
+        #expect(vetted?.parent == "/Applications/Real")
+        #expect(vetted?.name == "x.app")
+    }
+
+    @Test func sameNamedTrashItemsGetTheirOwnFolders() {
+        let script = PrivilegedRemover.script(for: [
+            ElevatedOperation(url: URL(fileURLWithPath: "/Applications/A/x.app"), trash: true),
+            ElevatedOperation(url: URL(fileURLWithPath: "/Applications/B/x.app"), trash: true),
+        ], trashDirectory: "/Users/me/.Trash", resolve: identity)
+        #expect(script.contains(#"/bin/mkdir -- "$bin/0""#))
+        #expect(script.contains(#"/bin/mkdir -- "$bin/1""#))
     }
 
     @Test func scriptWithoutTrashHasNoTrashFolder() {

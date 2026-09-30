@@ -181,10 +181,14 @@ final class DeletionController {
         bytesDone = job.totalBytes
         inFlight = []
 
-        // Only after a real admin attempt: a cancelled prompt says nothing about App Management.
+        // Not after a cancelled prompt (nothing was tried), but yes for user-owned apps, which are
+        // never elevated: only App Management can stop those.
         let blocked = zip(operations, outcomes).enumerated().contains { index, pair in
-            guard elevated.contains(index), case .failed = pair.1, let path = pair.0.url?.path else { return false }
-            return path.hasPrefix("/Applications/") && path.hasSuffix(".app") && DirectorySizer.exists(path)
+            guard case .failed = pair.1, let path = pair.0.url?.path,
+                  path.hasPrefix("/Applications/"), path.hasSuffix(".app"), DirectorySizer.exists(path) else { return false }
+            var info = stat()
+            let rootOwned = lstat(path, &info) != 0 || info.st_uid == 0
+            return elevated.contains(index) || !rootOwned
         }
         let result = DeletionResult(outcomes: outcomes, freedBytes: freed, failures: failures,
                                     movedToTrash: job.movesToTrash, blockedByAppManagement: blocked)
