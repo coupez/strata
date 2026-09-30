@@ -155,6 +155,11 @@ struct ResultToast: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
+                    if result.blockedByAppManagement {
+                        Button("Allow Strata in App Management…") { AppManagement.openSettings() }
+                            .buttonStyle(.link)
+                            .font(.system(size: 11))
+                    }
                 }
                 Button { model.deletion.dismissResult() } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain)

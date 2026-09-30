@@ -6,6 +6,8 @@ struct DeletionOperation {
         case trash(URL)
         case remove(URL)
         case command(executable: String, arguments: [String])
+        /// `launchctl bootout <target>`; not being loaded counts as success.
+        case unload(target: String)
     }
 
     let label: String
@@ -13,10 +15,21 @@ struct DeletionOperation {
     let estimatedBytes: Int64
 }
 
+extension DeletionOperation {
+    var url: URL? {
+        switch kind {
+        case .trash(let url), .remove(let url): url
+        case .command, .unload: nil
+        }
+    }
+}
+
 struct DeletionJob {
     let title: String
     let operations: [DeletionOperation]
     let movesToTrash: Bool
+    /// Retry items the user can't remove with one administrator prompt.
+    var allowsElevation = false
     var totalBytes: Int64 { operations.reduce(0) { $0 + $1.estimatedBytes } }
 }
 
@@ -31,6 +44,8 @@ struct DeletionResult {
     var freedBytes: Int64
     var failures: Int
     var movedToTrash: Bool
+    /// An app bundle couldn't be moved even as admin: macOS's App Management protection.
+    var blockedByAppManagement = false
 }
 
 /// Owns the 5-second grace period before anything is touched, then performs the work.
@@ -144,9 +159,12 @@ final class DeletionController {
         }
 
         let operations = job.operations
-        let outcomes = await Task.detached(priority: .userInitiated) {
+        var outcomes = await Task.detached(priority: .userInitiated) {
             await Deleter.performAll(operations, parallelism: Self.parallelism, progress: box)
         }.value
+        if job.allowsElevation {
+            outcomes = await PrivilegedRemover.retry(operations, outcomes: outcomes)
+        }
         ticker.cancel()
 
         var freed: Int64 = 0
@@ -162,7 +180,12 @@ final class DeletionController {
         bytesDone = job.totalBytes
         inFlight = []
 
-        let result = DeletionResult(outcomes: outcomes, freedBytes: freed, failures: failures, movedToTrash: job.movesToTrash)
+        let blocked = zip(operations, outcomes).contains { operation, outcome in
+            guard case .failed = outcome, let path = operation.url?.path else { return false }
+            return path.hasPrefix("/Applications/") && path.hasSuffix(".app") && DirectorySizer.exists(path)
+        }
+        let result = DeletionResult(outcomes: outcomes, freedBytes: freed, failures: failures,
+                                    movedToTrash: job.movesToTrash, blockedByAppManagement: blocked)
         self.result = result
         withAnimation(.spring(duration: 0.4)) { phase = .finished }
         completion?(result)
@@ -257,6 +280,11 @@ enum Deleter {
             let run = await Shell.run(executable, arguments, timeout: 900)
             if run.status == 0 { return .removed }
             return .failed(String(run.output.trimmingCharacters(in: .whitespacesAndNewlines).suffix(240)))
+
+        case .unload(let target):
+            // Not being loaded is fine: its plist is removed by the next operation either way.
+            _ = await Shell.run("/bin/launchctl", ["bootout", target], timeout: 30)
+            return .removed
         }
     }
 
