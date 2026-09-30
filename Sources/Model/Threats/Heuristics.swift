@@ -14,7 +14,9 @@ enum Heuristics {
         guard let program = item.program, !item.isOrphaned else { return [] }
         if isGenuineInterpreter(program, signature: signature) {
             guard let script = riskyScript(in: item) else { return [] }
-            return ["Runs a \((program as NSString).lastPathComponent) script from \(locationName(script))"]
+            let name = (program as NSString).lastPathComponent.lowercased()
+            let article = "aeiou".contains(name.first ?? "x") ? "an" : "a"
+            return ["Runs \(article) \(name) script from \(locationName(script))"]
         }
         if hasPrefix(program, in: trustedPrefixes) { return [] }
         let programSignature = signature(program)
@@ -38,7 +40,7 @@ enum Heuristics {
         var paths = [item.plist.path]
         guard let program = item.program else { return paths }
         if isGenuineInterpreter(program, signature: signature) {
-            paths += item.arguments.filter { $0.hasPrefix("/") && isRiskyLocation($0) }
+            if let script = riskyScript(in: item) { paths.append(script) }
         } else if hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) {
             // Belongs to macOS or a package manager.
         } else if let bundle = appBundle(containing: program) {
@@ -59,11 +61,14 @@ enum Heuristics {
     private static func isGenuineInterpreter(_ program: String, signature: (String) -> Signature) -> Bool {
         let name = (program as NSString).lastPathComponent.lowercased()
         guard interpreters.contains(name) || interpreterFamilies.contains(where: name.hasPrefix) else { return false }
-        return hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) || signature(program).isTrusted
+        // /usr/local is admin-writable rather than SIP-protected, so it only counts with a package manager or signature.
+        let isSystem = hasPrefix(program, in: systemPrefixes) && !hasPrefix(program, in: ["/usr/local/"])
+        return isSystem || hasPrefix(program, in: trustedPrefixes) || signature(program).isTrusted
     }
 
+    /// The script an interpreter runs is its first absolute-path argument; later paths (logs, config) are data.
     private static func riskyScript(in item: LaunchItem) -> String? {
-        item.arguments.first { $0.hasPrefix("/") && isRiskyLocation($0) }
+        item.arguments.first { $0.hasPrefix("/") }.flatMap { isRiskyLocation($0) ? $0 : nil }
     }
 
     /// The `.app` folder a path lives in, if any.
@@ -92,14 +97,18 @@ enum StaticThreats {
         var hits: [ThreatHit] = []
         for app in input.apps {
             let ids = [app.bundleID] + app.nestedBundleIDs
-            if let blocked = ids.first(where: { blockedExtensions[$0] != nil }) {
+            let blockedIDs = ids.filter { blockedExtensions[$0] != nil }
+            if let first = blockedIDs.first {
                 // Apple blocks an ID for specific developers; the same ID from anyone else is only a warning sign.
-                let developers = blockedExtensions[blocked] ?? []
-                if let team = signature(app.path).teamID, developers.contains(team) {
-                    hits.append(ThreatHit(paths: [app.path], verdict: .malicious, reason: "Contains an extension Apple blocks (\(blocked))", title: app.name))
+                let team = signature(app.path).teamID
+                if let match = blockedIDs.first(where: { id in team.map { blockedExtensions[id]?.contains($0) ?? false } ?? false }) {
+                    hits.append(ThreatHit(paths: [app.path], verdict: .malicious, reason: "Contains an extension Apple blocks (\(match))", title: app.name))
                 } else {
+                    let unlisted = blockedExtensions[first]?.isEmpty ?? true
                     hits.append(ThreatHit(paths: [app.path], verdict: .suspicious,
-                                          reason: "Contains an extension ID Apple blocks for another developer (\(blocked))", title: app.name))
+                                          reason: unlisted ? "Contains an extension ID Apple blocks (\(first))"
+                                                           : "Contains an extension ID Apple blocks for another developer (\(first))",
+                                          title: app.name))
                 }
             } else if let known = ids.lazy.compactMap(KnownThreats.match).first {
                 hits.append(ThreatHit(paths: [app.path], verdict: .adware, reason: "Known adware: \(known.family)", title: app.name))
