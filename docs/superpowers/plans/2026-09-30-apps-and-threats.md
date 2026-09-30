@@ -3817,13 +3817,13 @@ In **How it works**, add rows:
 
 ```markdown
 | Apps & Threats | [`Sources/Model/Apps`](Sources/Model/Apps), [`Sources/Model/Threats`](Sources/Model/Threats) | Pure scanners (apps, launch items, support files, signatures, XProtect, privacy grants) feed one `Classifier`. XProtect's YARA rules run through a vendored libyara on 4 threads. |
-| Admin removals | [`PrivilegedRemover.swift`](Sources/Model/Apps/PrivilegedRemover.swift) | Items you can't remove are retried after one password prompt per batch, limited to an allowlist of locations, every path single-quoted. |
+| Admin removals | [`PrivilegedRemover.swift`](Sources/Model/Apps/PrivilegedRemover.swift) | Root-owned items you can't remove are retried after one password prompt per batch: allowlisted locations only, every path single-quoted and re-validated (`cd -P`) inside the root script, no `chown`. |
 ```
 
 In **Safety**, add:
 
 ```markdown
-- Root-owned items (apps installed by a package, launch daemons) ask for your password once per batch, and only paths in `/Applications`, `/Library/Launch*`, `/Library/PrivilegedHelperTools`, a few `/Library` support folders and your home can be touched that way.
+- Root-owned items (apps installed by a package, launch daemons) ask for your password once per batch. Only root-owned items in `/Applications`, `/Library/Launch*`, `/Library/PrivilegedHelperTools` and a few `/Library` support folders can be touched that way (never anything Apple's), each path is re-checked right before it's removed, and nothing is ever re-owned. Trashed root items land in a "Removed by Strata" folder in your Trash; emptying it asks for your password.
 - In Apps & Threats only confirmed threats and dead launch items are pre-selected; running apps can't be selected.
 ```
 
@@ -3867,4 +3867,4 @@ sudo defaults write /Library/LaunchDaemons/com.stratatest.gone.plist Program /no
 sudo chmod 644 /Library/LaunchDaemons/com.stratatest.gone.plist
 ```
 
-Then in Strata: Apps & Threats → Re-scan. Expected: a **Leftovers** row `com.stratatest.gone` with 2 parts. Tick it, Remove (Move to Trash), wait out the countdown, enter the password once. Expected: both items leave `/Library`, and `ls -l ~/.Trash | grep com.stratatest` shows two entries owned by the user. Cancel the password prompt on a second attempt to confirm the toast reports the items as not removed.
+Then in Strata: Apps & Threats → Re-scan. Expected: a **Leftovers** row `com.stratatest.gone` with 2 parts. Tick it, Remove (Move to Trash), wait out the countdown, enter the password once. Expected: both items leave `/Library`, and `ls -lR ~/.Trash/Removed\ by\ Strata.*` shows them (still owned by root, under their original names). Cancel the password prompt on a second attempt to confirm the toast reports the items as not removed.

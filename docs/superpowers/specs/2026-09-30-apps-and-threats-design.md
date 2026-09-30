@@ -389,6 +389,16 @@ Checked on this Mac while planning; these supersede the sections above where the
 - **Selection survives re-classification**: the user's explicit checkbox choices persist when
   the threshold changes or XProtect results arrive; defaults apply only to untouched findings.
 
+- **Elevated removal hardened (Task 6 security review).** Only root-owned items are
+  elevated; the home folder is not an allowed root; the allowlist is case-insensitive and
+  denies `/Applications/Utilities`, `/Library/Preferences/SystemConfiguration/**`,
+  `/Library/Application Support/Apple/**` and any `com.apple.*`/`Apple` component (except
+  `/Library/Audio/Impulse Responses/Apple`). The root script re-validates each item with
+  `cd -P <realpath parent>` + `pwd -P` and acts on `./name`; it never runs `chown`. Trash mode
+  moves items with `mv -n` into a fresh `mktemp -d` "Removed by Strata" folder in `~/.Trash`
+  (they stay root-owned). This supersedes the `chown -R` / home-root design in *Removal*,
+  which allowed a hard-link privilege escalation.
+
 ## Open risks
 
 - **libyara vs. future Apple rule syntax** — today's rules compile (see above); the
