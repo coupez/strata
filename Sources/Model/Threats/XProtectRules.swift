@@ -5,8 +5,8 @@ struct XProtectInfo: Hashable, Sendable {
     let version: Int
     let updated: Date?
     let ruleFiles: [URL]
-    /// Safari extensions Apple blocks.
-    let blockedExtensionIDs: Set<String>
+    /// Safari extensions Apple blocks: bundle ID to the developer IDs it is blocked for (empty when none is listed).
+    let blockedExtensions: [String: Set<String>]
 }
 
 /// Apple's malware rules, read straight from the system. Newer macOS updates them in
@@ -33,13 +33,19 @@ enum XProtectRules {
         let files = [yara] + (FileManager.default.isReadableFile(atPath: scripts.path) ? [scripts] : [])
         let updated = (try? FileManager.default.attributesOfItem(atPath: yara.path))?[.modificationDate] as? Date
         return XProtectInfo(bundle: bundle, version: version, updated: updated, ruleFiles: files,
-                            blockedExtensionIDs: blockedExtensions(in: resources.appendingPathComponent("XProtect.meta.plist")))
+                            blockedExtensions: blockedExtensions(in: resources.appendingPathComponent("XProtect.meta.plist")))
     }
 
-    static func blockedExtensions(in meta: URL) -> Set<String> {
+    static func blockedExtensions(in meta: URL) -> [String: Set<String>] {
         guard let plist = NSDictionary(contentsOf: meta) as? [String: Any],
               let blacklist = plist["ExtensionBlacklist"] as? [String: Any],
-              let extensions = blacklist["Extensions"] as? [[String: Any]] else { return [] }
-        return Set(extensions.compactMap { $0["CFBundleIdentifier"] as? String })
+              let extensions = blacklist["Extensions"] as? [[String: Any]] else { return [:] }
+        var blocked: [String: Set<String>] = [:]
+        for entry in extensions {
+            guard let id = entry["CFBundleIdentifier"] as? String else { continue }
+            let developer = entry["Developer Identifier"] as? String
+            blocked[id, default: []].formUnion(developer.map { [$0] } ?? [])
+        }
+        return blocked
     }
 }

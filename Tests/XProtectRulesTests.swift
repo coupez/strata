@@ -10,7 +10,7 @@ struct XProtectRulesTests {
         if withRules { dir.file(name + "/Contents/Resources/XProtect.yara", "rule a { condition: false }") }
         if withScripts { dir.file(name + "/Contents/Resources/XPScripts.yr", "rule b { condition: false }") }
         dir.plist(name + "/Contents/Resources/XProtect.meta.plist", [
-            "ExtensionBlacklist": ["Extensions": [["CFBundleIdentifier": "com.bad.ext", "Developer Identifier": "X"]]],
+            "ExtensionBlacklist": ["Extensions": [["CFBundleIdentifier": "com.bad.ext", "Developer Identifier": "X"], ["CFBundleIdentifier": "com.nodev.ext"]]],
         ])
         return dir.url.appendingPathComponent(name)
     }
@@ -23,7 +23,7 @@ struct XProtectRulesTests {
         #expect(info.version == 5363)
         #expect(info.bundle == new)
         #expect(info.ruleFiles.map(\.lastPathComponent) == ["XProtect.yara", "XPScripts.yr"])
-        #expect(info.blockedExtensionIDs == ["com.bad.ext"])
+        #expect(info.blockedExtensions == ["com.bad.ext": ["X"], "com.nodev.ext": []])
         #expect(info.updated != nil)
     }
 

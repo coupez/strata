@@ -1,21 +1,22 @@
 import Foundation
 
-/// Signs that a launch item is up to no good. Signed-by-an-identified-developer programs and
-/// package-manager installs (Homebrew bottles are ad-hoc signed by design) are left alone.
+/// Signs that a launch item is up to no good. Trust comes from the program's signature, never from
+/// the launch label; package-manager installs (Homebrew bottles are ad-hoc signed by design) are left alone.
 enum Heuristics {
-    static let trustedPrefixes = ["/opt/homebrew/", "/usr/local/Cellar/", "/usr/local/opt/", "/usr/local/Homebrew/", "/opt/local/", "/nix/store/"]
-    static let riskyLocations = ["/tmp/", "/private/tmp/", "/private/var/tmp/", "/var/tmp/", "/Users/Shared/"]
-    static let systemPrefixes = ["/System/", "/usr/", "/bin/", "/sbin/", "/Library/Apple/"]
-    static let interpreters: Set<String> = ["sh", "bash", "zsh", "dash", "python", "python3", "perl", "ruby", "osascript", "node"]
+    // Prefix lists are lower-case: paths are compared case-insensitively (default macOS volumes are).
+    static let trustedPrefixes = ["/opt/homebrew/", "/usr/local/cellar/", "/usr/local/opt/", "/usr/local/homebrew/", "/opt/local/", "/nix/store/"]
+    static let riskyLocations = ["/tmp/", "/private/tmp/", "/private/var/tmp/", "/var/tmp/", "/private/var/folders/", "/var/folders/", "/users/shared/"]
+    static let systemPrefixes = ["/system/", "/usr/", "/bin/", "/sbin/", "/library/apple/"]
+    static let interpreters: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "env", "osascript", "node"]
+    static let interpreterFamilies = ["python", "perl", "ruby"]
 
     static func reasons(for item: LaunchItem, signature: (String) -> Signature) -> [String] {
-        guard let program = item.program, !item.isOrphaned, !item.label.hasPrefix("com.apple.") else { return [] }
-        let name = (program as NSString).lastPathComponent
-        if interpreters.contains(name) {
-            guard let script = item.arguments.first(where: { $0.hasPrefix("/") }), isRiskyLocation(script) else { return [] }
-            return ["Runs a \(name) script from \(locationName(script))"]
+        guard let program = item.program, !item.isOrphaned else { return [] }
+        if isGenuineInterpreter(program, signature: signature) {
+            guard let script = riskyScript(in: item) else { return [] }
+            return ["Runs a \((program as NSString).lastPathComponent) script from \(locationName(script))"]
         }
-        if trustedPrefixes.contains(where: program.hasPrefix) { return [] }
+        if hasPrefix(program, in: trustedPrefixes) { return [] }
         let programSignature = signature(program)
         if programSignature.isTrusted { return [] }
 
@@ -31,27 +32,54 @@ enum Heuristics {
         return reasons
     }
 
-    /// The plist plus any program or script that isn't part of macOS or of an app bundle.
-    static func removablePaths(of item: LaunchItem) -> [String] {
+    /// The plist plus any program or script that isn't part of macOS or of an app bundle. An untrusted
+    /// app bundle sitting in a risky folder is removed whole rather than just its executable.
+    static func removablePaths(of item: LaunchItem, signature: (String) -> Signature) -> [String] {
         var paths = [item.plist.path]
         guard let program = item.program else { return paths }
-        if !systemPrefixes.contains(where: program.hasPrefix), !trustedPrefixes.contains(where: program.hasPrefix),
-           !program.contains(".app/") {
-            paths.append(program)
-        }
-        if interpreters.contains((program as NSString).lastPathComponent) {
+        if isGenuineInterpreter(program, signature: signature) {
             paths += item.arguments.filter { $0.hasPrefix("/") && isRiskyLocation($0) }
+        } else if hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) {
+            // Belongs to macOS or a package manager.
+        } else if let bundle = appBundle(containing: program) {
+            if isRiskyLocation(bundle), !signature(program).isTrusted { paths.append(bundle) }
+        } else {
+            paths.append(program)
         }
         return paths
     }
 
     static func isRiskyLocation(_ path: String) -> Bool {
-        riskyLocations.contains(where: path.hasPrefix) || path.split(separator: "/").dropLast().contains { $0.hasPrefix(".") }
+        hasPrefix(path, in: riskyLocations)
+            || path.split(separator: "/").contains { $0.hasPrefix(".") && $0 != "." && $0 != ".." }
+    }
+
+    /// A shell or scripting runtime that macOS or a package manager installed (or a developer signed).
+    /// A file merely named `bash` in /tmp is a program, not an interpreter.
+    private static func isGenuineInterpreter(_ program: String, signature: (String) -> Signature) -> Bool {
+        let name = (program as NSString).lastPathComponent.lowercased()
+        guard interpreters.contains(name) || interpreterFamilies.contains(where: name.hasPrefix) else { return false }
+        return hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) || signature(program).isTrusted
+    }
+
+    private static func riskyScript(in item: LaunchItem) -> String? {
+        item.arguments.first { $0.hasPrefix("/") && isRiskyLocation($0) }
+    }
+
+    /// The `.app` folder a path lives in, if any.
+    private static func appBundle(containing path: String) -> String? {
+        guard let range = path.range(of: ".app/", options: .caseInsensitive) else { return nil }
+        return String(path[..<range.upperBound].dropLast())
+    }
+
+    private static func hasPrefix(_ path: String, in prefixes: [String]) -> Bool {
+        let lowered = path.lowercased()
+        return prefixes.contains(where: lowered.hasPrefix)
     }
 
     private static func locationName(_ path: String) -> String {
-        if path.hasPrefix("/Users/Shared/") { return "the shared Users folder" }
-        if riskyLocations.contains(where: path.hasPrefix) { return "a temporary folder" }
+        if hasPrefix(path, in: ["/users/shared/"]) { return "the shared Users folder" }
+        if hasPrefix(path, in: riskyLocations) { return "a temporary folder" }
         return "a hidden folder"
     }
 }
@@ -59,24 +87,31 @@ enum Heuristics {
 /// Threats found without scanning file contents: known adware, Apple-blocked extensions and
 /// suspicious launch items.
 enum StaticThreats {
-    static func hits(_ input: AppScanInput, blockedExtensionIDs: Set<String>,
+    static func hits(_ input: AppScanInput, blockedExtensions: [String: Set<String>],
                      signature: (String) -> Signature = CodeSignature.check) -> [ThreatHit] {
         var hits: [ThreatHit] = []
         for app in input.apps {
             let ids = [app.bundleID] + app.nestedBundleIDs
-            if let blocked = ids.first(where: blockedExtensionIDs.contains) {
-                hits.append(ThreatHit(paths: [app.path], verdict: .malicious, reason: "Contains an extension Apple blocks (\(blocked))", title: app.name))
+            if let blocked = ids.first(where: { blockedExtensions[$0] != nil }) {
+                // Apple blocks an ID for specific developers; the same ID from anyone else is only a warning sign.
+                let developers = blockedExtensions[blocked] ?? []
+                if let team = signature(app.path).teamID, developers.contains(team) {
+                    hits.append(ThreatHit(paths: [app.path], verdict: .malicious, reason: "Contains an extension Apple blocks (\(blocked))", title: app.name))
+                } else {
+                    hits.append(ThreatHit(paths: [app.path], verdict: .suspicious,
+                                          reason: "Contains an extension ID Apple blocks for another developer (\(blocked))", title: app.name))
+                }
             } else if let known = ids.lazy.compactMap(KnownThreats.match).first {
                 hits.append(ThreatHit(paths: [app.path], verdict: .adware, reason: "Known adware: \(known.family)", title: app.name))
             }
         }
         for item in input.launchItems {
             if let known = KnownThreats.match(item.label) {
-                hits.append(ThreatHit(paths: Heuristics.removablePaths(of: item), verdict: .adware, reason: "Known adware: \(known.family)", title: item.label))
+                hits.append(ThreatHit(paths: Heuristics.removablePaths(of: item, signature: signature), verdict: .adware, reason: "Known adware: \(known.family)", title: item.label))
             } else {
                 let reasons = Heuristics.reasons(for: item, signature: signature)
                 if !reasons.isEmpty {
-                    hits.append(ThreatHit(paths: Heuristics.removablePaths(of: item), verdict: .suspicious,
+                    hits.append(ThreatHit(paths: Heuristics.removablePaths(of: item, signature: signature), verdict: .suspicious,
                                           reason: reasons.joined(separator: " · "), title: item.label))
                 }
             }
