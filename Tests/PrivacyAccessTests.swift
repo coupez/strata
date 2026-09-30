@@ -6,6 +6,9 @@ import Testing
 struct PrivacyAccessTests {
     let dir = TempDir()
 
+    /// Hits carry the path where the file really is, which spells out /private.
+    private func real(_ path: String) -> String { PrivilegedRemover.realpathOf(path)! }
+
     func database(_ rows: [(service: String, client: String, type: Int, auth: Int)]) -> URL {
         let url = dir.url.appendingPathComponent("TCC.db")
         var db: OpaquePointer?
@@ -49,8 +52,49 @@ struct PrivacyAccessTests {
         let hits = PrivacyAccess.hits(grants, resolve: { $0 == "com.example.trusted" ? trustedApp : nil }, signature: { path in
             path == trustedApp.path ? Signature(kind: .identified, teamID: "T") : Signature(kind: .unsigned, teamID: nil)
         })
-        #expect(hits.map(\.primary) == [tool.path])
+        #expect(hits.map(\.primary) == [real(tool.path)])
         #expect(hits.first?.verdict == .suspicious)
         #expect(hits.first?.reason == "Not signed and allowed to use Input Monitoring, Screen Recording")
+    }
+
+    private static let unsigned = Signature(kind: .unsigned, teamID: nil)
+
+    @Test func aProgramInsideAnAppIsRemovedAsTheWholeApp() {
+        let app = dir.app("Foo.app", id: "com.example.foo", executable: "Foo")
+        let inner = app.appendingPathComponent("Contents/MacOS/Foo")
+        let hits = PrivacyAccess.hits([PrivacyGrant(client: inner.path, isPath: true, service: .screen)],
+                                      resolve: { _ in nil }, signature: { _ in Self.unsigned })
+        #expect(hits.map(\.paths) == [[real(app.path)]])
+        #expect(hits.first?.title == "Foo.app")
+    }
+
+    @Test func anAppResolvedFromItsBundleIDIsRemovedWhole() {
+        let app = dir.app("Bar.app", id: "com.example.bar")
+        let hits = PrivacyAccess.hits([PrivacyGrant(client: "com.example.bar", isPath: false, service: .keystrokes)],
+                                      resolve: { _ in app }, signature: { _ in Self.unsigned })
+        #expect(hits.map(\.paths) == [[real(app.path)]])
+    }
+
+    @Test func unremovableClientsGetNoHit() {
+        let folder = dir.directory("bin/tools")
+        let file = dir.file("bin/keylogger", "#!/bin/sh\n")
+        let grants = [
+            PrivacyGrant(client: folder.path, isPath: true, service: .screen),
+            PrivacyGrant(client: dir.path + "/bin/../bin/keylogger", isPath: true, service: .screen),
+            PrivacyGrant(client: "/usr/bin/true", isPath: true, service: .screen),
+        ]
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(PrivacyAccess.hits(grants, resolve: { _ in nil }, signature: { _ in Self.unsigned }).isEmpty)
+    }
+
+    @Test func appleIsJudgedBySignatureNotByBundleIDPrefix() {
+        let fake = dir.app("Fake.app", id: "com.apple.fake")
+        let genuine = dir.app("Real.app", id: "com.apple.real")
+        let grants = [PrivacyGrant(client: "com.apple.fake", isPath: false, service: .screen),
+                      PrivacyGrant(client: "com.apple.real", isPath: false, service: .screen)]
+        let hits = PrivacyAccess.hits(grants, resolve: { $0 == "com.apple.fake" ? fake : genuine }, signature: { path in
+            path == genuine.path ? Signature(kind: .apple, teamID: nil) : Self.unsigned
+        })
+        #expect(hits.map(\.primary) == [real(fake.path)])
     }
 }

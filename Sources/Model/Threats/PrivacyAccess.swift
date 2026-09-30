@@ -79,6 +79,7 @@ enum PrivacyAccess {
             return nil
         }
         defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 500)
         let services = PrivacyGrant.Service.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
         let sql = "SELECT client, client_type, service FROM access WHERE auth_value = 2 AND service IN (\(services))"
         var statement: OpaquePointer?
@@ -86,12 +87,15 @@ enum PrivacyAccess {
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(statement) }
         var rows: [PrivacyGrant] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            defer { step = sqlite3_step(statement) }
             guard let client = sqlite3_column_text(statement, 0), let service = sqlite3_column_text(statement, 2),
                   let kind = PrivacyGrant.Service(rawValue: String(cString: service)) else { continue }
             rows.append(PrivacyGrant(client: String(cString: client), isPath: sqlite3_column_int(statement, 1) == 1, service: kind))
         }
-        return rows
+        // A busy or locked database must not look like "no grants".
+        return step == SQLITE_DONE ? rows : nil
     }
 
     static func resolveApp(_ id: String) -> URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) }
@@ -102,17 +106,19 @@ enum PrivacyAccess {
         return resolve(grant.client)?.path
     }
 
-    /// Untrusted programs that can see your screen or keystrokes.
+    /// Untrusted programs that can see your screen or keystrokes. A program that can't be safely removed
+    /// (a folder, a system or package-manager file) gets no hit, though its grant is still listed.
     static func hits(_ grants: [PrivacyGrant], resolve: (String) -> URL?, signature: (String) -> Signature) -> [ThreatHit] {
-        let watching = Dictionary(grouping: grants.filter { $0.service.canWatch && !$0.client.hasPrefix("com.apple.") }, by: \.client)
+        let watching = Dictionary(grouping: grants.filter { $0.service.canWatch }, by: \.client)
         return watching.keys.sorted().compactMap { client in
             let clientGrants = watching[client] ?? []
             guard let first = clientGrants.first, let path = location(of: first, resolve: resolve) else { return nil }
             let clientSignature = signature(path)
-            guard !clientSignature.isTrusted else { return nil }
+            guard !clientSignature.isTrusted,
+                  let target = Heuristics.removalTarget(forProgram: path, orBundle: true) else { return nil }
             let services = clientGrants.map(\.service.title).sorted().joined(separator: ", ")
-            return ThreatHit(paths: [path], verdict: .suspicious, reason: "\(clientSignature.summary) and allowed to use \(services)",
-                             title: (path as NSString).lastPathComponent)
+            return ThreatHit(paths: [target], verdict: .suspicious, reason: "\(clientSignature.summary) and allowed to use \(services)",
+                             title: (target as NSString).lastPathComponent)
         }
     }
 

@@ -47,16 +47,27 @@ enum Heuristics {
         let program = location ?? standardized(raw)
         if isGenuineInterpreter(program, signature: signature) {
             if let script = riskyScript(in: item), isFileOrLink(script) { paths.append(script) }
-        } else if hasPrefix(program, in: systemPrefixes) || hasPrefix(program, in: trustedPrefixes) {
-            // Belongs to macOS or a package manager.
-        } else if let location {
-            if let bundle = appBundle(containing: location) {
-                if isRisky(bundle), !signature(location).isTrusted { paths.append(bundle) }
-            } else if isFileOrLink(location) {
-                paths.append(location)
+        } else if let location, let target = removalTarget(forProgram: raw) {
+            // A bundle is only listed whole, when it sits in a risky folder and isn't trusted.
+            if target != location {
+                if isRisky(target), !signature(location).isTrusted { paths.append(target) }
+            } else {
+                paths.append(target)
             }
         }
         return paths
+    }
+
+    /// What removing a program means: the `.app` it lives in (an inner executable alone would break the app),
+    /// else the file or link itself, judged where the path really leads. nil when it can't or shouldn't be
+    /// removed: unusable path (`..`, relative, missing folder), a folder, or part of macOS or a package manager.
+    /// `orBundle` also accepts a path that is itself an app bundle, for callers holding an app rather than a program.
+    static func removalTarget(forProgram path: String, orBundle: Bool = false) -> String? {
+        guard let location = resolved(path),
+              !hasPrefix(location, in: systemPrefixes), !hasPrefix(location, in: trustedPrefixes) else { return nil }
+        if let bundle = appBundle(containing: location) { return bundle }
+        if orBundle, location.lowercased().hasSuffix(".app"), isDirectory(location) { return location }
+        return isFileOrLink(location) ? location : nil
     }
 
     /// Judged where the path really leads: `/tmp/lnk/Documents` with `lnk` pointing home is not a temp file.
@@ -82,6 +93,11 @@ enum Heuristics {
         guard lstat(path, &info) == 0 else { return false }
         let type = info.st_mode & S_IFMT
         return type == S_IFREG || type == S_IFLNK
+    }
+
+    private static func isDirectory(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR
     }
 
     /// For a path already resolved.
